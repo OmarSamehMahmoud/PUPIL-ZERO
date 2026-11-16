@@ -117,8 +117,8 @@ def health() -> dict[str, Any]:
 
 @app.get("/api/lessons")
 def lessons() -> list[dict[str, str]]:
-    lesson = get_lesson("fractions")
-    return [{"id": lesson["id"], "title_ar": lesson["title_ar"], "title_en": lesson["title_en"], "grade": lesson["grade"]}]
+    from app.curriculum import list_lessons
+    return list_lessons()
 
 
 @app.post("/api/sessions")
@@ -126,6 +126,8 @@ def start_session(payload: StartRequest) -> dict[str, Any]:
     lesson = get_lesson(payload.lesson_id)
     if not lesson:
         raise HTTPException(404, "Lesson not found")
+    if payload.persona not in {"milo", "noura", "zizo"}:
+        raise HTTPException(422, "Unknown classmate persona")
     session_id = str(uuid.uuid4())
     opening = lesson["scenarios"][0]["prompt_ar"]
     transcript = [{"role": "ai", "text": opening}]
