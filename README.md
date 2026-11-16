@@ -2,51 +2,93 @@
 
 **Teach an AI. Discover what you really know.**
 
-PUPIL ZERO is a voice-first, curriculum-grounded learning-by-teaching experience for Egyptian school students. Learners explain concepts to an AI classmate; the system asks misconception-driven questions and produces an evidence-linked learning report.
+PUPIL ZERO is an Arabic-first, learning-by-teaching experience for Egyptian school students. A learner explains a topic to an AI classmate; the classmate asks follow-up questions, and the session produces a transparent, teacher-reviewable evidence report.
 
-## MVP scope
+## Current build
 
-- Egyptian preparatory-school mathematics (initial demonstrator).
-- Arabic-first voice interaction using browser speech APIs where available.
-- One AI classmate persona with configurable misconception profiles.
-- Deterministic, curriculum-grounded assessment baseline; optional LLM integration is planned but not required to run the starter.
-- Teacher-facing session summary.
-- No special hardware.
+- FastAPI + SQLite session storage.
+- Arabic RTL student interface with text chat and optional browser speech input/output.
+- Three character profiles in the local AI prompt (MILO, NOURA, ZIZO); MILO is currently selected by the starter screen.
+- Live model integration through a local Ollama server or an OpenAI-compatible endpoint.
+- Deterministic fallback mode when no model is configured. The interface labels this as a demo; it is not represented as live AI.
+- Initial fractions lesson is original demonstrator content. Exact grade/term alignment with the current Egyptian Ministry curriculum is not yet verified.
 
-## Project status
+## Run with local Ollama (recommended for offline use)
 
-Early MVP scaffold. The first release prioritizes a reliable local demo and transparent assessment evidence. It is not an official Ministry of Education product, does not claim Ministry endorsement, and is not a replacement for teachers or formal assessment.
+1. Install and start Ollama on the same computer.
+2. Download a model supported by your machine. Example:
 
-## Run locally
+   ```bash
+   ollama pull qwen3.5:4b
+   ```
 
-```bash
-python -m venv .venv
-# Windows: .venv\\Scripts\\activate
-# macOS/Linux: source .venv/bin/activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload
-```
+   Use a model already available in your Ollama library if you prefer.
+3. Create and activate a Python environment:
 
-Open http://127.0.0.1:8000
+   ```bash
+   python -m venv .venv
+   # Windows PowerShell:
+   .venv\\Scripts\\Activate.ps1
+   # macOS/Linux:
+   source .venv/bin/activate
+   ```
+4. Install dependencies and create the environment file:
+
+   ```bash
+   pip install -r requirements.txt
+   # Windows:
+   copy .env.example .env
+   # macOS/Linux:
+   cp .env.example .env
+   ```
+5. Open `.env` and set the exact model tag shown by `ollama list`:
+
+   ```dotenv
+   PUPIL_LLM_PROVIDER=ollama
+   PUPIL_LLM_BASE_URL=http://127.0.0.1:11434
+   PUPIL_LLM_MODEL=qwen3.5:4b
+   ```
+6. Start the app:
+
+   ```bash
+   uvicorn app.main:app --reload
+   ```
+
+7. Open http://127.0.0.1:8000. The header should show **ذكاء اصطناعي محلي متصل** when the provider and model are configured.
+
+If you do not configure a model, PUPIL ZERO runs in clearly labelled demo fallback mode. If a configured model is unreachable, the chat reports an error instead of silently pretending that a canned response came from AI.
+
+## OpenAI-compatible local servers
+
+Set `PUPIL_LLM_PROVIDER=openai-compatible`, `PUPIL_LLM_BASE_URL` to the server base URL (without `/v1/chat/completions`), and `PUPIL_LLM_MODEL` to its model identifier. Set `PUPIL_LLM_API_KEY` only if the server requires one.
+
+## API
+
+- `GET /api/health` — health and active AI/demo mode.
+- `GET /api/lessons` — available starter lessons.
+- `POST /api/sessions` — create a session.
+- `POST /api/message` — send a learner explanation and receive the classmate's response.
+- `POST /api/finish` — return transcript and formative evidence report.
 
 ## Curriculum sources and rights
 
-Use the Ministry of Education's official electronic textbook portal as a discovery/source reference:
+The Ministry of Education's official electronic textbook portal is the source to verify grade, subject, term, and topic mapping:
 https://studentbooks.moe.gov.eg/
 
-The Ministry's published materials state that intellectual property rights in the developed curricula belong to the Egyptian state represented by the Ministry. Do not bulk-copy, redistribute, or embed textbook PDFs/content in this repository without confirming permission and applicable terms. This project initially uses original summaries, learning objectives, and original examples aligned to publicly visible syllabus topics. Each curriculum record should retain source URL, academic year, grade, subject, term, and verification date.
+The Ministry's published materials state that intellectual property rights in developed curricula belong to the Egyptian state represented by the Ministry. Do not bulk-copy, redistribute, or embed textbook PDFs/content in this repository without confirming permission and applicable terms. This project uses original summaries, objectives, and examples; it does not claim official Ministry endorsement.
 
-## Safety and privacy
+## Safety, privacy, and limitations
 
 - Obtain appropriate parent/guardian and school consent before use with minors.
-- Avoid collecting student full names, precise location, face/video, or raw voice recordings by default.
-- Browser speech recognition support varies by browser and may use vendor cloud services; disclose this clearly. Text mode is always available.
-- AI feedback is formative and must be reviewable by a teacher.
-- Never use the score as a psychological diagnosis or a high-stakes grade.
+- Avoid collecting student names, precise location, face/video, or raw voice recordings by default.
+- Text chat with local Ollama stays on the configured local endpoint. Do not configure a remote endpoint if local-only processing is required.
+- Browser speech recognition support varies and may use a browser vendor's cloud service. Voice input is therefore not guaranteed to be offline; text mode is available.
+- The report uses explainable keyword signals, not a validated educational measurement or grade. Teacher review is required.
+- AI responses can be wrong. This is a prototype, not a replacement for a teacher or formal assessment.
 
-## Planned architecture
+## Development status
 
-FastAPI + SQLite for the first local prototype; browser-native speech recognition/synthesis; a replaceable persona/assessment service; later integrations can add a self-hosted speech stack and an LLM provider behind explicit configuration.
+This is an actively evolving MVP. Automated tests are included but must be run in the target environment before treating a build as verified. The current lesson catalog is intentionally small; curriculum expansion should follow source verification and original-content authoring.
 
 ## License
 
