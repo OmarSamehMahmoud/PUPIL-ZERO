@@ -1,6 +1,6 @@
 # PUPIL ZERO
 
-**Prototype version: 0.3.0**
+**Prototype version: 0.4.0**
 
 **Teach an AI. Discover what you really know.**
 
@@ -15,7 +15,7 @@ PUPIL ZERO is an Arabic-first, learning-by-teaching prototype. A learner explain
 - Three original mathematics demonstrator lessons: fractions, decimals, and introductory ratios.
 - Local Ollama integration and OpenAI-compatible chat endpoint support.
 - Explicit demo fallback when no model is configured; if a configured model is unavailable, the app reports an error instead of pretending demo text is live AI.
-- Teacher dashboard at `/teacher` with session list, transcript detail, and conservative keyword-evidence signals.
+- Teacher dashboard at `/teacher` with session list, transcript detail, conservative keyword-evidence signals, and lesson-level class insight aggregation.
 
 ## Run locally with Ollama
 
