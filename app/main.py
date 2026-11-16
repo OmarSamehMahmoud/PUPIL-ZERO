@@ -425,8 +425,8 @@ def intervention_feedback_summary(lesson_id: str = Query(...), concept_id: str =
 
 @app.get("/api/teacher/priorities")
 def teacher_priorities(lesson_id: str | None = Query(default=None), teacher: dict[str,Any] = Depends(current_teacher)) -> dict[str, Any]:
-    """Return cautious teacher review priorities from aggregated local evidence."""
-    insights = teacher_insights(lesson_id=lesson_id)
+    """Return cautious teacher review priorities from this teacher account only."""
+    insights = teacher_insights(lesson_id=lesson_id, teacher=teacher)
     return build_review_priorities(insights)
 
 
