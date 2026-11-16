@@ -118,8 +118,12 @@ def init_db() -> None:
             concept_id TEXT NOT NULL,
             rating TEXT NOT NULL CHECK(rating IN ('helpful', 'partly_helpful', 'not_helpful')),
             note TEXT NOT NULL DEFAULT '',
+            teacher_id TEXT,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         )""")
+        feedback_columns = {row["name"] for row in con.execute("PRAGMA table_info(intervention_feedback)")}
+        if "teacher_id" not in feedback_columns:
+            con.execute("ALTER TABLE intervention_feedback ADD COLUMN teacher_id TEXT")
 
 
 @app.on_event("startup")
@@ -374,8 +378,8 @@ def teacher_intervention_plan(lesson_id: str = Query(...), concept_id: str = Que
         raise HTTPException(404, "Concept not found in this lesson")
     with db() as con:
         rows = con.execute(
-            "SELECT rating, COUNT(*) AS count FROM intervention_feedback WHERE lesson_id=? AND concept_id=? GROUP BY rating",
-            (lesson_id, concept_id),
+            "SELECT rating, COUNT(*) AS count FROM intervention_feedback WHERE lesson_id=? AND concept_id=? AND teacher_id=? GROUP BY rating",
+            (lesson_id, concept_id, teacher["id"]),
         ).fetchall()
     counts = {"helpful": 0, "partly_helpful": 0, "not_helpful": 0}
     for row in rows:
@@ -394,8 +398,8 @@ def save_intervention_feedback(payload: InterventionFeedbackRequest, teacher: di
         raise HTTPException(404, "Concept not found in this lesson")
     with db() as con:
         con.execute(
-            "INSERT INTO intervention_feedback(lesson_id, concept_id, rating, note) VALUES (?, ?, ?, ?)",
-            (payload.lesson_id, payload.concept_id, payload.rating, payload.note.strip()),
+            "INSERT INTO intervention_feedback(lesson_id, concept_id, rating, note, teacher_id) VALUES (?, ?, ?, ?, ?)",
+            (payload.lesson_id, payload.concept_id, payload.rating, payload.note.strip(), teacher["id"]),
         )
     return {"saved": True, "message": "تم حفظ تقييم الخطة بدون بيانات تعريفية."}
 
@@ -409,8 +413,8 @@ def intervention_feedback_summary(lesson_id: str = Query(...), concept_id: str =
         raise HTTPException(404, "Concept not found in this lesson")
     with db() as con:
         rows = con.execute(
-            "SELECT rating, COUNT(*) AS count FROM intervention_feedback WHERE lesson_id=? AND concept_id=? GROUP BY rating",
-            (lesson_id, concept_id),
+            "SELECT rating, COUNT(*) AS count FROM intervention_feedback WHERE lesson_id=? AND concept_id=? AND teacher_id=? GROUP BY rating",
+            (lesson_id, concept_id, teacher["id"]),
         ).fetchall()
     counts = {"helpful": 0, "partly_helpful": 0, "not_helpful": 0}
     for row in rows:
@@ -570,10 +574,17 @@ def make_demo_reply(student_text: str, count: int, lesson_title: str, stage: str
 
 
 @app.post("/api/message")
-async def send_message(payload: MessageRequest) -> dict[str, Any]:
+async def send_message(payload: MessageRequest, request: Request) -> dict[str, Any]:
     with db() as con:
         row = con.execute("SELECT * FROM sessions WHERE id=?", (payload.session_id,)).fetchone()
     if not row:
+        raise HTTPException(404, "Session not found")
+    user = getattr(request.state, "user", None)
+    if row["student_id"] and (not user or user.get("id") != row["student_id"]):
+        raise HTTPException(404, "Session not found")
+    if row["teacher_id"] and (not user or user.get("id") != row["teacher_id"] and user.get("id") != row["student_id"]):
+        raise HTTPException(404, "Session not found")
+    if not row["teacher_id"] and not row["student_id"] and user:
         raise HTTPException(404, "Session not found")
 
     transcript = json.loads(row["transcript"])
@@ -609,10 +620,17 @@ async def send_message(payload: MessageRequest) -> dict[str, Any]:
 
 
 @app.post("/api/finish")
-def finish_session(payload: FinishRequest) -> dict[str, Any]:
+def finish_session(payload: FinishRequest, request: Request) -> dict[str, Any]:
     with db() as con:
         row = con.execute("SELECT * FROM sessions WHERE id=?", (payload.session_id,)).fetchone()
     if not row:
+        raise HTTPException(404, "Session not found")
+    user = getattr(request.state, "user", None)
+    if row["student_id"] and (not user or user.get("id") != row["student_id"]):
+        raise HTTPException(404, "Session not found")
+    if row["teacher_id"] and (not user or user.get("id") != row["teacher_id"] and user.get("id") != row["student_id"]):
+        raise HTTPException(404, "Session not found")
+    if not row["teacher_id"] and not row["student_id"] and user:
         raise HTTPException(404, "Session not found")
     transcript = json.loads(row["transcript"])
     lesson = get_lesson(row["lesson_id"])
