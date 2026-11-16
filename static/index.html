@@ -10,8 +10,8 @@
   <main class="shell">
     <header class="topbar"><a class="brand" href="/">PUPIL<span>ZERO</span></a><span class="tag">THE MISCONCEPTION LAB</span><span id="modeLabel" class="mode-label demo">جاري فحص وضع التشغيل...</span></header>
     <section class="hero">
-      <div class="hero-copy"><p class="eyebrow">تعلّم بطريقة مختلفة</p><h1>إنت المدرّس النهارده.</h1><p class="sub">علّم MILO، زميلك الافتراضي، واكتشف بنفسك مدى فهمك للدرس.</p><button id="startBtn" class="primary">ابدأ الحصة <span>←</span></button></div>
-      <div class="avatar-wrap"><div class="orb"></div><div class="avatar" id="avatar">🤖</div><div class="speech-bubble">أنا MILO! ممكن تشرحلي؟</div><div class="avatar-caption">MILO <small>زميلك اللي محتاج مساعدتك</small></div></div>
+      <div class="hero-copy"><p class="eyebrow">تعلّم بطريقة مختلفة</p><h1>إنت المدرّس النهارده.</h1><p class="sub">علّم زميلك الافتراضي، واكتشف بنفسك مدى فهمك للدرس.</p><div class="start-options"><label for="lessonSelect">اختار الدرس</label><select id="lessonSelect" class="choice"><option value="fractions">فهم الكسور</option></select><label for="personaSelect">اختار زميلك</label><select id="personaSelect" class="choice"><option value="milo">MILO — الفضولي 🤖</option><option value="noura">NOURA — المتحمسة 🌟</option><option value="zizo">ZIZO — المرح 🎮</option></select><button id="startBtn" class="primary">ابدأ الحصة <span>←</span></button></div></div>
+      <div class="avatar-wrap"><div class="orb"></div><div class="avatar" id="avatar">🤖</div><div class="speech-bubble">أنا MILO! ممكن تشرحلي؟</div><div class="avatar-caption" id="avatarCaption">MILO <small>زميلك اللي محتاج مساعدتك</small></div></div>
     </section>
     <section id="classroom" class="classroom hidden">
       <div class="lesson-head"><div><span class="eyebrow">مهمتك التعليمية</span><h2>فهم الكسور</h2></div><span class="lesson-chip">رياضيات · محتوى تجريبي</span></div>
@@ -20,7 +20,7 @@
       <p id="voiceNote" class="fine">الصوت يعتمد على دعم المتصفح وقد تتم معالجة الكلام بواسطة خدمة المتصفح. يمكنك استخدام الكتابة دائمًا.</p>
     </section>
     <section id="report" class="report hidden"><p class="eyebrow">تقرير الحصة</p><h2>برافو! دي إشارات لفهمك</h2><div id="reportBody"></div><button class="primary" onclick="location.reload()">ابدأ من جديد</button></section>
-    <footer>نسخة تجريبية تعليمية مستقلة · ليست منتجًا رسميًا لوزارة التربية والتعليم</footer>
+    <footer><a href="/teacher">لوحة متابعة المدرّس</a> · نسخة تجريبية تعليمية مستقلة · ليست منتجًا رسميًا لوزارة التربية والتعليم</footer>
   </main>
   <script src="/static/app.js"></script>
 </body></html>
