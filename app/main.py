@@ -25,10 +25,11 @@ from app.llm import generate_reply, public_status
 from app.learning_journey import build_learning_journey
 from app.pedagogy import advance_state, initial_state, state_context
 from app.teacher_intelligence import build_review_priorities
+from app.learning_engine import build_study_plan, get_quiz_questions, grade_quiz
 
 ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = ROOT / "pupil_zero.db"
-app = FastAPI(title="PUPIL ZERO", version="1.9.0", description="Local-first learning-by-teaching MVP")
+app = FastAPI(title="PUPIL ZERO", version="2.0.0", description="Local-first learning-by-teaching MVP")
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
 
@@ -120,6 +121,14 @@ class SchoolAttendanceRequest(BaseModel):
     student_id: str = Field(min_length=1, max_length=64)
     attendance_date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
     status: str = Field(pattern=r"^(present|absent|late|excused)$")
+
+class QuizStartRequest(BaseModel):
+    lesson_id: str = Field(min_length=1, max_length=64)
+
+
+class QuizSubmitRequest(BaseModel):
+    answers: dict[str, str] = Field(default_factory=dict)
+
 
 class SchoolLessonRecordRequest(BaseModel):
     timetable_id: str = Field(min_length=1, max_length=64)
@@ -294,6 +303,13 @@ def init_db() -> None:
             read_at TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         )""")
         con.execute("CREATE INDEX IF NOT EXISTS idx_user_notifications_recipient ON user_notifications(recipient_role,recipient_id,created_at)")
+        con.execute("""CREATE TABLE IF NOT EXISTS student_quizzes (
+            id TEXT PRIMARY KEY, student_id TEXT NOT NULL REFERENCES users(id),
+            lesson_id TEXT NOT NULL, questions_json TEXT NOT NULL,
+            submitted_at TEXT, result_json TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )""")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_student_quizzes_student ON student_quizzes(student_id,created_at)")
         con.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_school_teachers_single_school ON school_teachers(teacher_id)")
         con.execute("""CREATE TABLE IF NOT EXISTS school_teacher_invites (
             token_hash TEXT PRIMARY KEY, school_id TEXT NOT NULL REFERENCES schools(id),
@@ -523,6 +539,83 @@ def student_assignments(class_id: str | None = Query(default=None), student: dic
         query += " ORDER BY CASE WHEN sub.student_id IS NULL THEN 0 ELSE 1 END, a.created_at DESC"
         rows = con.execute(query, tuple(params)).fetchall()
     return {"assignments": [dict(row) for row in rows]}
+
+
+@app.get("/api/student/study-plan/{lesson_id}")
+def student_study_plan(lesson_id: str, student: dict[str, Any] = Depends(current_student)) -> dict[str, Any]:
+    lesson = get_lesson(lesson_id)
+    if not lesson:
+        raise HTTPException(404, "Lesson not found")
+    with db() as con:
+        rows = con.execute("""SELECT transcript,created_at FROM sessions
+            WHERE student_id=? AND lesson_id=? ORDER BY created_at DESC LIMIT 20""",
+            (student["id"], lesson_id)).fetchall()
+    reports = []
+    for row in rows:
+        try:
+            transcript = json.loads(row["transcript"] or "[]")
+            reports.append({"report": assess_explanation(transcript, lesson), "created_at": row["created_at"]})
+        except (TypeError, json.JSONDecodeError):
+            continue
+    return build_study_plan(lesson, reports)
+
+
+@app.post("/api/student/quizzes", status_code=201)
+def create_student_quiz(payload: QuizStartRequest,
+                        student: dict[str, Any] = Depends(current_student)) -> dict[str, Any]:
+    lesson = get_lesson(payload.lesson_id)
+    if not lesson:
+        raise HTTPException(404, "Lesson not found")
+    questions = get_quiz_questions(payload.lesson_id)
+    if not questions:
+        raise HTTPException(404, "No formative questions are available for this lesson")
+    quiz_id = str(uuid.uuid4())
+    with db() as con:
+        con.execute("INSERT INTO student_quizzes(id,student_id,lesson_id,questions_json) VALUES(?,?,?,?)",
+                    (quiz_id, student["id"], payload.lesson_id, json.dumps(questions, ensure_ascii=False)))
+    public_questions = [{k: v for k, v in question.items() if k not in ("correct_option", "explanation")}
+                        for question in questions]
+    return {"quiz_id": quiz_id, "lesson_id": payload.lesson_id, "lesson": lesson["title_ar"],
+            "questions": public_questions, "notice": "اختبار تدريبي قصير، وليس امتحانًا رسميًا أو درجة مدرسية."}
+
+
+@app.post("/api/student/quizzes/{quiz_id}/submit")
+def submit_student_quiz(quiz_id: str, payload: QuizSubmitRequest,
+                        student: dict[str, Any] = Depends(current_student)) -> dict[str, Any]:
+    with db() as con:
+        row = con.execute("SELECT * FROM student_quizzes WHERE id=? AND student_id=?",
+                          (quiz_id, student["id"])).fetchone()
+        if not row:
+            raise HTTPException(404, "Quiz not found")
+        if row["submitted_at"]:
+            raise HTTPException(409, "This quiz has already been submitted")
+        questions = json.loads(row["questions_json"])
+        allowed = {q["id"] for q in questions}
+        if set(payload.answers) - allowed:
+            raise HTTPException(422, "Answers contain an unknown question id")
+        result = grade_quiz(questions, payload.answers)
+        result_json = json.dumps(result, ensure_ascii=False)
+        con.execute("UPDATE student_quizzes SET submitted_at=CURRENT_TIMESTAMP,result_json=? WHERE id=? AND student_id=? AND submitted_at IS NULL",
+                    (result_json, quiz_id, student["id"]))
+    return result
+
+
+@app.get("/api/student/quizzes/history")
+def student_quiz_history(student: dict[str, Any] = Depends(current_student)) -> dict[str, Any]:
+    with db() as con:
+        rows = con.execute("""SELECT id,lesson_id,submitted_at,result_json,created_at
+            FROM student_quizzes WHERE student_id=? AND submitted_at IS NOT NULL
+            ORDER BY submitted_at DESC LIMIT 30""", (student["id"],)).fetchall()
+    history = []
+    for row in rows:
+        try:
+            result = json.loads(row["result_json"] or "{}")
+        except json.JSONDecodeError:
+            result = {}
+        history.append({"quiz_id": row["id"], "lesson_id": row["lesson_id"],
+                        "submitted_at": row["submitted_at"], "score": result.get("score"),
+                        "total": result.get("total")})
+    return {"history": history, "notice": "نتائج تدريبية للمراجعة الذاتية وليست درجات مدرسية."}
 
 
 def current_parent(request: Request) -> dict[str, Any]:
