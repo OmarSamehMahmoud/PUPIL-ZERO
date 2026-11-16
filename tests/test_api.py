@@ -29,7 +29,7 @@ def test_student_and_teacher_flow_uses_local_database(tmp_path, monkeypatch):
         assert detail.json()["transcript"][0]["role"] == "ai"
         assert detail.json()["dialogue_state"]["stage"] == "elicit"
 
-        message = client.post("/api/message", json={"session_id": session_id, "text": "نفس الحجم والقطعة أصغر"})
+        message = client.post("/api/message", json={"session_id": session_id, "text": "0.80 أكبر من 0.75 بالمقارنة"})
         assert message.status_code == 200
         assert message.json()["stage"] == "transfer"
         updated = client.get(f"/api/teacher/sessions/{session_id}")
