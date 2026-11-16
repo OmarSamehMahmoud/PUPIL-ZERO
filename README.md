@@ -1,6 +1,6 @@
 # PUPIL ZERO
 
-**Prototype version: 1.3.0**
+**Prototype version: 1.4.0**
 
 **Teach an AI. Discover what you really know.**
 
@@ -17,6 +17,8 @@ PUPIL ZERO is an Arabic-first, learning-by-teaching prototype. A learner explain
 - Student assignment inbox scoped to enrolled classes; students launch the assigned lesson from the task and the task is marked submitted after they contribute at least one response and finish the session.
 - Student progress endpoint summarizing their own sessions, lessons visited, and longitudinal concept keyword signals; optional class filter is restricted to their memberships.
 - Teacher class progress dashboard with per-student session counts, lessons visited, and evidence-signal summaries; individual progress is available only when the student belongs to a class owned by that teacher.
+- Parent accounts can only be created from a teacher-issued, single-use guardian invitation tied to a specific student and class; invitations expire after seven days.
+- Parent portal is restricted to the linked student/class pair and shows aggregate activity, lesson IDs, assignment submission status, and a downloadable PDF report. It does not expose chat transcripts.
 - Arabic account portal at `/account`.
 - Arabic RTL student experience, responsive layout, text chat, and optional browser speech input/output.
 - Three selectable classmates: MILO, NOURA, and ZIZO. Each has a distinct prompt profile.
@@ -113,6 +115,11 @@ Tests are committed and a GitHub Actions workflow runs them on pushes and pull r
 - `GET /api/student/progress` — the signed-in student's own learning progress; optional enrolled `class_id` filter.
 - `GET /api/teacher/classes/{class_id}/progress` — roster-level progress summary for a class owned by the signed-in teacher.
 - `GET /api/teacher/students/{student_id}/progress?class_id=...` — individual progress, only for a student enrolled in the specified class owned by the teacher.
+- `POST /api/teacher/students/{student_id}/guardian-invite?class_id=...` — create a single-use, seven-day guardian invitation for a student in a class owned by the teacher.
+- `POST /api/auth/register-parent` — create a parent account using a valid guardian invitation.
+- `GET /api/parent/students` — list only student/class links owned by the signed-in parent.
+- `GET /api/parent/students/{student_id}/progress?class_id=...` — parent-facing aggregate report for an explicitly linked student/class.
+- `GET /api/parent/students/{student_id}/report.pdf?class_id=...` — downloadable PDF report for that same link.
 
 - `GET /api/health` — app and configured inference mode.
 - `GET /api/lessons` — demonstrator lesson catalog.
@@ -135,7 +142,7 @@ The lesson content in this repository is original demonstrator content, not copi
 ## Safety, privacy, and limitations
 
 - This is a locally tested classroom-scoping foundation, not a production-ready multi-school deployment. Existing legacy sessions remain unassigned and are deliberately excluded from teacher dashboards. Do not use it to store real student records or expose it to a school network/public internet yet.
-- Students can sign in after class enrollment, select an enrolled class, and create class-linked sessions. Full school administration, assignment editing/deletion, class invitations, student account recovery, due-date enforcement, validated educational measurement, parent portal, and deployment-grade controls remain pending.
+- Students can sign in after class enrollment, select an enrolled class, and create class-linked sessions. Full school administration, assignment editing/deletion, student account recovery, due-date enforcement, validated educational measurement, and deployment-grade controls remain pending. The first PDF export uses English-safe labels and ASCII fallback for names until an Arabic shaping font is bundled.
 - Account registration is open in this local prototype. Before deployment, add administrator-controlled teacher invitations, rate limiting, password reset/recovery, secure HTTPS cookie configuration, CSRF protection appropriate to the deployment, audit logging, and a reviewed data-retention/deletion workflow.
 - Before any real pilot with minors, obtain school and parent/guardian approvals, define retention/deletion rules, and implement authentication and access controls.
 - Avoid collecting names, phone numbers, precise location, face/video, or raw voice recordings. The journey feature uses a random browser-local UUID rather than a name or account; it is a pseudonymous identifier, so protect the local database and browser profile.
