@@ -164,6 +164,21 @@ def login(payload: LoginRequest, response: Response) -> dict[str, Any]:
     response.set_cookie("pupil_session",token,httponly=True,samesite="strict",max_age=604800,path="/")
     return {"user":{"id":user["id"],"email":user["email"],"display_name":user["display_name"],"role":user["role"]}}
 
+@app.get("/api/auth/me")
+def auth_me(request: Request) -> dict[str, Any]:
+    token = request.cookies.get("pupil_session", "")
+    if not token:
+        raise HTTPException(401, "Not authenticated")
+    with db() as con:
+        user = con.execute(
+            "SELECT u.id,u.email,u.display_name,u.role FROM auth_sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>?",
+            (token_digest(token), int(time.time())),
+        ).fetchone()
+    if not user:
+        raise HTTPException(401, "Not authenticated")
+    return {"user": dict(user)}
+
+
 @app.post("/api/auth/logout")
 def logout(request: Request, response: Response) -> dict[str,bool]:
     token=request.cookies.get("pupil_session","")
@@ -204,6 +219,11 @@ def join_class(payload: StudentJoinRequest) -> dict[str,Any]:
         except sqlite3.IntegrityError as exc: raise HTTPException(409,"An account with this email already exists") from exc
         con.execute("INSERT INTO class_members(class_id,student_id) VALUES(?,?)",(classroom["id"],student_id))
     return {"student":{"id":student_id,"display_name":payload.display_name.strip()},"class":{"id":classroom["id"],"name":classroom["name"]}}
+
+@app.get("/account", response_class=HTMLResponse)
+def account_page() -> str:
+    return (ROOT / "static" / "account.html").read_text(encoding="utf-8")
+
 
 @app.get("/", response_class=HTMLResponse)
 def home() -> str:
