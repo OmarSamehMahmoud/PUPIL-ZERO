@@ -32,7 +32,7 @@ def test_reflection_context_does_not_claim_mastery():
     state = initial_state(lesson)
     state["stage"] = "reflect"
     prompt = state_context(state, lesson)
-    assert "لا تمنحه درجة" in prompt
+    assert "لا تمنح درجة" in prompt
     assert "الإتقان" in prompt
 
 
