@@ -245,7 +245,7 @@ def auth_me(request: Request) -> dict[str, Any]:
         raise HTTPException(401, "Not authenticated")
     with db() as con:
         user = con.execute(
-            "SELECT u.id,u.email,u.display_name,u.role FROM auth_sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>?",
+            "SELECT id,email,display_name,role FROM (SELECT u.id,u.email,u.display_name,u.role,s.token_hash,s.expires_at FROM auth_sessions s JOIN users u ON u.id=s.user_id UNION ALL SELECT p.id,p.email,p.display_name,'parent' AS role,s.token_hash,s.expires_at FROM auth_sessions s JOIN parent_accounts p ON p.id=s.user_id) WHERE token_hash=? AND expires_at>?",
             (token_digest(token), int(time.time())),
         ).fetchone()
     if not user:
