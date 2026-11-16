@@ -8,6 +8,12 @@ from app import main
 def test_student_and_teacher_flow_uses_local_database(tmp_path, monkeypatch):
     monkeypatch.setattr(main, "DB_PATH", tmp_path / "test.sqlite3")
     with TestClient(main.app) as client:
+        teacher = client.post("/api/auth/register-teacher", json={
+            "email": "teacher@example.test", "password": "StrongPass123!", "display_name": "Teacher One"
+        })
+        assert teacher.status_code == 201
+        assert teacher.json()["user"]["role"] == "teacher"
+        assert client.get("/api/auth/me").status_code == 401
         lessons = client.get("/api/lessons")
         assert lessons.status_code == 200
         lesson_ids = {lesson["id"] for lesson in lessons.json()}
@@ -27,6 +33,22 @@ def test_student_and_teacher_flow_uses_local_database(tmp_path, monkeypatch):
 
         rejected = client.post("/api/sessions", json={"lesson_id": "decimals", "persona": "unknown"})
         assert rejected.status_code == 422
+
+        classroom = client.post("/api/classes", json={"name": "Class 1", "grade_label": "Primary 5"})
+        assert classroom.status_code == 201
+        join_code = classroom.json()["join_code"]
+        assert len(join_code) == 8
+        assert client.get("/api/classes").json()["classes"][0]["student_count"] == 0
+        joined = client.post("/api/classes/join", json={
+            "join_code": join_code, "display_name": "Student One",
+            "email": "student@example.test", "password": "StudentPass123!"
+        })
+        assert joined.status_code == 201
+        assert joined.json()["class"]["name"] == "Class 1"
+        members = client.get(f"/api/classes/{classroom.json()['id']}/members")
+        assert members.status_code == 200
+        assert len(members.json()["members"]) == 1
+        assert members.json()["members"][0]["display_name"] == "Student One"
 
         listing = client.get("/api/teacher/sessions")
         assert listing.status_code == 200
@@ -104,6 +126,21 @@ def test_student_and_teacher_flow_uses_local_database(tmp_path, monkeypatch):
         assert client.get("/api/teacher/interventions?lesson_id=missing&concept_id=x").status_code == 404
         assert client.get("/teacher").status_code == 200
 
+
+
+def test_teacher_area_requires_login(tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "DB_PATH", tmp_path / "auth.sqlite3")
+    with TestClient(main.app) as client:
+        assert client.get("/api/teacher/sessions").status_code == 401
+        assert client.get("/teacher").status_code == 401
+        assert client.post("/api/auth/login", json={"email": "none@example.test", "password": "wrong"}).status_code == 401
+        registered = client.post("/api/auth/register-teacher", json={
+            "email": "owner@example.test", "password": "AnotherStrong123!", "display_name": "Owner"
+        })
+        assert registered.status_code == 201
+        assert client.get("/api/teacher/sessions").status_code == 200
+        assert client.post("/api/auth/logout").json()["logged_out"] is True
+        assert client.get("/api/teacher/sessions").status_code == 401
 
 
 def test_init_db_migrates_legacy_sessions_table(tmp_path, monkeypatch):
