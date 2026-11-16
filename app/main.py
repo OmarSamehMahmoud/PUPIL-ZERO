@@ -22,7 +22,7 @@ from app.teacher_intelligence import build_review_priorities
 
 ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = ROOT / "pupil_zero.db"
-app = FastAPI(title="PUPIL ZERO", version="0.8.0", description="Local-first learning-by-teaching MVP")
+app = FastAPI(title="PUPIL ZERO", version="0.9.0", description="Local-first learning-by-teaching MVP")
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
 
@@ -39,6 +39,13 @@ class MessageRequest(BaseModel):
 
 class FinishRequest(BaseModel):
     session_id: str
+
+
+class InterventionFeedbackRequest(BaseModel):
+    lesson_id: str
+    concept_id: str
+    rating: str = Field(pattern="^(helpful|partly_helpful|not_helpful)$")
+    note: str = Field(default="", max_length=500)
 
 
 def db() -> sqlite3.Connection:
@@ -59,6 +66,14 @@ def init_db() -> None:
             con.execute("ALTER TABLE sessions ADD COLUMN state_json TEXT NOT NULL DEFAULT '{}'")
         if "learner_id" not in columns:
             con.execute("ALTER TABLE sessions ADD COLUMN learner_id TEXT")
+        con.execute("""CREATE TABLE IF NOT EXISTS intervention_feedback (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            lesson_id TEXT NOT NULL,
+            concept_id TEXT NOT NULL,
+            rating TEXT NOT NULL CHECK(rating IN ('helpful', 'partly_helpful', 'not_helpful')),
+            note TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )""")
 
 
 @app.on_event("startup")
@@ -189,7 +204,56 @@ def teacher_intervention_plan(lesson_id: str = Query(...), concept_id: str = Que
     plan = build_intervention_plan(lesson, concept_id)
     if not plan:
         raise HTTPException(404, "Concept not found in this lesson")
+    with db() as con:
+        rows = con.execute(
+            "SELECT rating, COUNT(*) AS count FROM intervention_feedback WHERE lesson_id=? AND concept_id=? GROUP BY rating",
+            (lesson_id, concept_id),
+        ).fetchall()
+    counts = {"helpful": 0, "partly_helpful": 0, "not_helpful": 0}
+    for row in rows:
+        counts[row["rating"]] = row["count"]
+    plan["feedback_summary"] = {"total": sum(counts.values()), **counts}
     return plan
+
+
+@app.post("/api/teacher/interventions/feedback", status_code=201)
+def save_intervention_feedback(payload: InterventionFeedbackRequest) -> dict[str, Any]:
+    """Store an anonymous teacher rating; notes are optional and never exposed in aggregates."""
+    lesson = get_lesson(payload.lesson_id)
+    if not lesson:
+        raise HTTPException(404, "Lesson not found")
+    if not any(item.get("id") == payload.concept_id for item in lesson.get("concepts", [])):
+        raise HTTPException(404, "Concept not found in this lesson")
+    with db() as con:
+        con.execute(
+            "INSERT INTO intervention_feedback(lesson_id, concept_id, rating, note) VALUES (?, ?, ?, ?)",
+            (payload.lesson_id, payload.concept_id, payload.rating, payload.note.strip()),
+        )
+    return {"saved": True, "message": "تم حفظ تقييم الخطة بدون بيانات تعريفية."}
+
+
+@app.get("/api/teacher/interventions/feedback")
+def intervention_feedback_summary(lesson_id: str = Query(...), concept_id: str = Query(...)) -> dict[str, Any]:
+    lesson = get_lesson(lesson_id)
+    if not lesson:
+        raise HTTPException(404, "Lesson not found")
+    if not any(item.get("id") == concept_id for item in lesson.get("concepts", [])):
+        raise HTTPException(404, "Concept not found in this lesson")
+    with db() as con:
+        rows = con.execute(
+            "SELECT rating, COUNT(*) AS count FROM intervention_feedback WHERE lesson_id=? AND concept_id=? GROUP BY rating",
+            (lesson_id, concept_id),
+        ).fetchall()
+    counts = {"helpful": 0, "partly_helpful": 0, "not_helpful": 0}
+    for row in rows:
+        counts[row["rating"]] = row["count"]
+    total = sum(counts.values())
+    return {
+        "lesson_id": lesson_id, "concept_id": concept_id,
+        "total": total, **counts,
+        "sample_notice": "العينة صغيرة؛ لا تستنتج نمطًا من أقل من 3 تقييمات." if total < 3 else "ملخص وصفي لتقييمات المدرسين، وليس مقياسًا لجودة التدريس أو تعلم الطلاب.",
+    }
+
 
 @app.get("/api/teacher/priorities")
 def teacher_priorities(lesson_id: str | None = Query(default=None)) -> dict[str, Any]:
@@ -248,7 +312,7 @@ def teacher_session_detail(session_id: str) -> dict[str, Any]:
 
 @app.get("/api/health")
 def health() -> dict[str, Any]:
-    return {"status": "ok", "product": "PUPIL ZERO", "version": "0.8.0", **public_status()}
+    return {"status": "ok", "product": "PUPIL ZERO", "version": "0.9.0", **public_status()}
 
 
 @app.get("/api/lessons")
