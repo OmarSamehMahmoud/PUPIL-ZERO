@@ -1,3 +1,5 @@
+import sqlite3
+
 from fastapi.testclient import TestClient
 
 from app import main
@@ -11,9 +13,20 @@ def test_student_and_teacher_flow_uses_local_database(tmp_path, monkeypatch):
         lesson_ids = {lesson["id"] for lesson in lessons.json()}
         assert {"fractions", "decimals", "ratio"} <= lesson_ids
 
-        started = client.post("/api/sessions", json={"lesson_id": "decimals", "persona": "noura"})
+        learner_id = "12345678-1234-4234-8234-123456789abc"
+        started = client.post("/api/sessions", json={"lesson_id": "decimals", "persona": "noura", "learner_id": learner_id})
         assert started.status_code == 200
         session_id = started.json()["session_id"]
+        assert started.json()["learner_id"] == learner_id
+        journey = client.get(f"/api/learner/journey/{learner_id}")
+        assert journey.status_code == 200
+        assert journey.json()["session_count"] == 1
+        assert journey.json()["timeline"][0]["session_id"] == session_id
+        assert client.get("/api/learner/journey/not-a-uuid").status_code == 422
+
+        second = client.post("/api/sessions", json={"lesson_id": "fractions", "persona": "milo", "learner_id": learner_id})
+        assert second.status_code == 200
+        assert client.get(f"/api/learner/journey/{learner_id}").json()["session_count"] == 2
 
         rejected = client.post("/api/sessions", json={"lesson_id": "decimals", "persona": "unknown"})
         assert rejected.status_code == 422
@@ -56,3 +69,19 @@ def test_student_and_teacher_flow_uses_local_database(tmp_path, monkeypatch):
         assert unknown_priorities.status_code == 404
 
         assert client.get("/teacher").status_code == 200
+
+
+
+def test_init_db_migrates_legacy_sessions_table(tmp_path, monkeypatch):
+    path = tmp_path / "legacy.sqlite3"
+    monkeypatch.setattr(main, "DB_PATH", path)
+    with sqlite3.connect(path) as con:
+        con.execute("""CREATE TABLE sessions (
+            id TEXT PRIMARY KEY, lesson_id TEXT NOT NULL, persona TEXT NOT NULL,
+            transcript TEXT NOT NULL DEFAULT '[]', created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            state_json TEXT NOT NULL DEFAULT '{}'
+        )""")
+    main.init_db()
+    with sqlite3.connect(path) as con:
+        columns = {row[1] for row in con.execute("PRAGMA table_info(sessions)")}
+    assert "learner_id" in columns
