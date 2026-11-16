@@ -20,6 +20,9 @@ SYSTEM_TEMPLATE = """أنت {persona_name}، زميل دراسة افتراضي 
 الشخصية المختارة: {persona}
 سياق الدرس (ملخص تعليمي أصلي، وليس نص كتاب):
 {lesson_context}
+
+حالة الحوار التكيفية:
+{state_context}
 """
 
 PERSONAS = {
@@ -49,7 +52,7 @@ def public_status() -> dict[str, Any]:
     }
 
 
-def build_system_prompt(lesson: dict[str, Any], persona: str = "milo") -> str:
+def build_system_prompt(lesson: dict[str, Any], persona: str = "milo", state_context: str = "ابدأ بسؤال استكشافي واحد.") -> str:
     concepts = "\n".join(
         f"- {item['label_ar']}: {item['misconception']}"
         for item in lesson.get("concepts", [])
@@ -64,6 +67,7 @@ def build_system_prompt(lesson: dict[str, Any], persona: str = "milo") -> str:
         persona_name=names.get(persona, "MILO"),
         persona=PERSONAS.get(persona, PERSONAS["milo"]),
         lesson_context=context,
+        state_context=state_context,
     )
 
 
@@ -76,7 +80,8 @@ def _history_messages(transcript: list[dict[str, str]], system_prompt: str) -> l
 
 
 async def generate_reply(
-    messages: list[dict[str, str]], lesson: dict[str, Any], persona: str
+    messages: list[dict[str, str]], lesson: dict[str, Any], persona: str,
+    dialogue_state: str = "ابدأ بسؤال استكشافي واحد."
 ) -> str:
     cfg = provider_settings()
     provider = cfg["provider"]
@@ -87,7 +92,7 @@ async def generate_reply(
     if not cfg["model"]:
         raise RuntimeError("Set PUPIL_LLM_MODEL before starting a live AI session")
 
-    chat_messages = _history_messages(messages, build_system_prompt(lesson, persona))
+    chat_messages = _history_messages(messages, build_system_prompt(lesson, persona, dialogue_state))
 
     timeout = httpx.Timeout(60.0, connect=5.0)
     async with httpx.AsyncClient(timeout=timeout) as client:
