@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-SYSTEM_TEMPLATE = """أنت MILO، زميل دراسة افتراضي لطيف وفضولي لطالب مدرسة في مصر.
+SYSTEM_TEMPLATE = """أنت {persona_name}، زميل دراسة افتراضي لطيف وفضولي لطالب مدرسة في مصر.
 تحدث بعربية مصرية بسيطة، بجمل قصيرة ومناسبة لعمر الطالب.
 مهمتك أن تتعلم من الطالب: لا تلقِ محاضرة ولا تعطِ الحل النهائي مباشرة.
 اسأل سؤال متابعة واحدًا في كل مرة، واطلب مثالًا أو تفسيرًا أو رسمًا بالكلمات.
@@ -59,7 +59,9 @@ def build_system_prompt(lesson: dict[str, Any], persona: str = "milo") -> str:
         f"الأهداف: {'؛ '.join(lesson.get('learning_objectives', []))}\n"
         f"نقاط قد يختلط فهمها: \n{concepts}"
     )
+    names = {"milo": "MILO", "noura": "NOURA", "zizo": "ZIZO"}
     return SYSTEM_TEMPLATE.format(
+        persona_name=names.get(persona, "MILO"),
         persona=PERSONAS.get(persona, PERSONAS["milo"]),
         lesson_context=context,
     )
