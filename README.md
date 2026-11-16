@@ -1,6 +1,6 @@
 # PUPIL ZERO
 
-**Prototype version: 1.1.0**
+**Prototype version: 1.2.0**
 
 **Teach an AI. Discover what you really know.**
 
@@ -13,6 +13,8 @@ PUPIL ZERO is an Arabic-first, learning-by-teaching prototype. A learner explain
 - Classroom registry: teachers can create classes with join codes, students can create accounts and join with a code, and teachers can view their class roster.
 - Class-linked student learning: joining a class signs the student in locally; the student can select an enrolled class, start a session linked to that class and its owning teacher, and view only their own account-linked learning journey.
 - Teacher data scoping: teacher session lists, details, insights, priorities, class rosters, and intervention feedback are restricted to the signed-in teacher account. Legacy sessions without an owner are excluded from teacher dashboards.
+- Teacher-created assignments scoped to owned classes, with title, instructions, lesson, optional due date, student task list, and per-student submitted/pending status.
+- Student assignment inbox scoped to enrolled classes; students launch the assigned lesson from the task and the task is marked submitted after they contribute at least one response and finish the session.
 - Arabic account portal at `/account`.
 - Arabic RTL student experience, responsive layout, text chat, and optional browser speech input/output.
 - Three selectable classmates: MILO, NOURA, and ZIZO. Each has a distinct prompt profile.
@@ -103,10 +105,13 @@ Tests are committed and a GitHub Actions workflow runs them on pushes and pull r
 - `GET /api/classes/{class_id}/members` — list members of a class owned by the authenticated teacher.
 - `POST /api/classes/join` — create a student account, enroll it using a class join code, and sign the student in.
 - `GET /api/student/classes` — list classes for the signed-in student.
+- `POST /api/teacher/assignments` — publish an assignment to one class owned by the signed-in teacher. JSON: `{"class_id":"...","title":"Explain fractions","description":"Use an example","lesson_id":"fractions","due_at":"2026-11-20T18:00"}`.
+- `GET /api/teacher/assignments` — list owned assignments and each class member’s submitted/pending status; optional owned `class_id` filter.
+- `GET /api/student/assignments` — list assignments for the signed-in student’s enrolled classes; optional `class_id` filter.
 
 - `GET /api/health` — app and configured inference mode.
 - `GET /api/lessons` — demonstrator lesson catalog.
-- `POST /api/sessions` — create a session. Students must provide an enrolled `class_id`; the server derives the student and teacher ownership from the membership record. Teacher-created local sessions remain teacher-owned; anonymous demo sessions remain unassigned.
+- `POST /api/sessions` — create a session. Students must provide an enrolled `class_id`; the server derives the student and teacher ownership from the membership record. To complete a task, also provide its `assignment_id` and use the lesson selected by the teacher. Teacher-created local sessions remain teacher-owned; anonymous demo sessions remain unassigned.
 - `POST /api/message` — send a student explanation. JSON: `{"session_id":"...","text":"..."}`.
 - `POST /api/finish` — return transcript, formative evidence report, and current dialogue state.
 - `GET /api/teacher/sessions` — recent sessions owned by the signed-in teacher; optional `class_id` narrows to one owned class.
@@ -125,7 +130,7 @@ The lesson content in this repository is original demonstrator content, not copi
 ## Safety, privacy, and limitations
 
 - This is a locally tested classroom-scoping foundation, not a production-ready multi-school deployment. Existing legacy sessions remain unassigned and are deliberately excluded from teacher dashboards. Do not use it to store real student records or expose it to a school network/public internet yet.
-- Students can sign in after class enrollment, select an enrolled class, and create class-linked sessions. Full school administration, class invitations, student account recovery, and deployment-grade controls remain pending.
+- Students can sign in after class enrollment, select an enrolled class, and create class-linked sessions. Full school administration, assignment editing/deletion, class invitations, student account recovery, due-date enforcement, and deployment-grade controls remain pending.
 - Account registration is open in this local prototype. Before deployment, add administrator-controlled teacher invitations, rate limiting, password reset/recovery, secure HTTPS cookie configuration, CSRF protection appropriate to the deployment, audit logging, and a reviewed data-retention/deletion workflow.
 - Before any real pilot with minors, obtain school and parent/guardian approvals, define retention/deletion rules, and implement authentication and access controls.
 - Avoid collecting names, phone numbers, precise location, face/video, or raw voice recordings. The journey feature uses a random browser-local UUID rather than a name or account; it is a pseudonymous identifier, so protect the local database and browser profile.
