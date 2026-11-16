@@ -1,7 +1,7 @@
 let sessionId=null;let recognition=null;const $=id=>document.getElementById(id);
 function addMessage(role,text){const el=document.createElement('div');el.className='bubble '+role;el.textContent=text;$('chat').appendChild(el);$('chat').scrollTop=$('chat').scrollHeight}
 async function api(path,data){const r=await fetch(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});const payload=await r.json();if(!r.ok)throw new Error(payload.detail||'Request failed');return payload}
-function setMode(mode){const el=$('modeLabel');if(!el)return;el.textContent=mode==='live_ai'?'ذكاء اصطناعي محلي متصل':'وضع العرض التجريبي';el.className='mode-label '+(mode==='live_ai'?'live':'demo')}
+function setMode(mode){const el=$('modeLabel');if(!el)return;el.textContent=mode==='live_ai'?'إعداد الذكاء الاصطناعي المحلي':'وضع العرض التجريبي';el.className='mode-label '+(mode==='live_ai'?'live':'demo')}
 async function loadStatus(){try{const r=await fetch('/api/health');const s=await r.json();setMode(s.mode)}catch(e){setMode('demo_fallback')}}
 function speak(text){if(!('speechSynthesis'in window))return;window.speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(text);u.lang='ar-EG';u.rate=.94;window.speechSynthesis.speak(u)}
 loadStatus();
