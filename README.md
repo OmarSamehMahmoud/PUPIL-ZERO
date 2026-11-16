@@ -1,6 +1,6 @@
 # PUPIL ZERO
 
-**Prototype version: 0.7.0**
+**Prototype version: 0.8.0**
 
 **Teach an AI. Discover what you really know.**
 
@@ -16,6 +16,7 @@ PUPIL ZERO is an Arabic-first, learning-by-teaching prototype. A learner explain
 - Three original mathematics demonstrator lessons: fractions, decimals, and introductory ratios.
 - Local Ollama integration and OpenAI-compatible chat endpoint support.
 - Explicit demo fallback when no model is configured; if a configured model is unavailable, the app reports an error instead of pretending demo text is live AI.
+- Teacher intervention planner: creates a four-step, 15-minute review suggestion from the selected lesson's authored concept explanation and existing scenarios. The teacher must review, adapt, and decide whether to use it; it is not automatically assigned.
 - Teacher dashboard at `/teacher` with session list, transcript detail, conservative keyword-evidence signals, lesson-level class insight aggregation, evidence-grounded review-priority suggestions with small-sample warnings, and an anonymous learner journey that compares per-session evidence over time.
 
 ## Run locally with Ollama
@@ -95,7 +96,8 @@ Tests are committed and a GitHub Actions workflow runs them on pushes and pull r
 - `GET /api/teacher/sessions` — recent local sessions.
 - `GET /api/teacher/sessions/{session_id}` — transcript and report for one session.
 - `GET /api/teacher/insights` — aggregate evidence and review signals by lesson; optional `lesson_id` filter. These are not mastery scores.
-- `GET /api/teacher/priorities` — rank concepts flagged for teacher review; optional `lesson_id` filter. Small samples are explicitly marked insufficient, and priorities are not diagnoses or mastery scores.
+- `GET /api/teacher/priorities` — rank concepts flagged for teacher review;
+- `GET /api/teacher/interventions?lesson_id=fractions&concept_id=unit_fraction` — create a teacher-reviewed suggestion from authored lesson content; optional `lesson_id` filter. Small samples are explicitly marked insufficient, and priorities are not diagnoses or mastery scores.
 - `GET /api/learner/journey/{learner_id}` — chronological evidence history for an anonymous learner UUID. The student browser stores this random key locally and reuses it across sessions; clearing browser storage loses the association for future sessions. This is not a verified student identity or a validated measure of retention.
 
 ## Curriculum status and rights
