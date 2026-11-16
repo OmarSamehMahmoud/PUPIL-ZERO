@@ -18,7 +18,7 @@ from app.pedagogy import advance_state, initial_state, state_context
 
 ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = ROOT / "pupil_zero.db"
-app = FastAPI(title="PUPIL ZERO", version="0.3.0", description="Local-first learning-by-teaching MVP")
+app = FastAPI(title="PUPIL ZERO", version="0.4.0", description="Local-first learning-by-teaching MVP")
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
 
@@ -195,7 +195,7 @@ def teacher_session_detail(session_id: str) -> dict[str, Any]:
 
 @app.get("/api/health")
 def health() -> dict[str, Any]:
-    return {"status": "ok", "product": "PUPIL ZERO", "version": "0.3.0", **public_status()}
+    return {"status": "ok", "product": "PUPIL ZERO", "version": "0.4.0", **public_status()}
 
 
 @app.get("/api/lessons")
