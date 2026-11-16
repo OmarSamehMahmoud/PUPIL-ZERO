@@ -22,7 +22,7 @@ PUPIL ZERO is an Arabic-first, learning-by-teaching prototype. A learner explain
 - Local Ollama integration and OpenAI-compatible chat endpoint support.
 - Explicit demo fallback when no model is configured; if a configured model is unavailable, the app reports an error instead of pretending demo text is live AI.
 - Teacher intervention planner: creates a four-step, 15-minute review suggestion from the selected lesson's authored concept explanation and existing scenarios. The teacher must review, adapt, and decide whether to use it; it is not automatically assigned.
-- Anonymous teacher feedback loop for intervention plans: optional helpful / partly helpful / not helpful rating plus a short note, with aggregate counts only. Notes are not exposed by summary endpoints; fewer than three ratings are labelled a small sample. Feedback does not automatically change plans or judge student learning.
+- Teacher-account-scoped feedback loop for intervention plans: optional helpful / partly helpful / not helpful rating plus a short note, with aggregate counts only. Notes are not exposed by summary endpoints; fewer than three ratings are labelled a small sample. Feedback does not automatically change plans or judge student learning.
 - Teacher dashboard at `/teacher` with session list, transcript detail, conservative keyword-evidence signals, lesson-level class insight aggregation, evidence-grounded review-priority suggestions with small-sample warnings, and an anonymous learner journey that compares per-session evidence over time.
 
 ## Run locally with Ollama
@@ -114,7 +114,7 @@ Tests are committed and a GitHub Actions workflow runs them on pushes and pull r
 - `GET /api/teacher/insights` — aggregate evidence and review signals by lesson; optional `lesson_id` and owned `class_id` filters. These are not mastery scores.
 - `GET /api/teacher/priorities` — rank concepts flagged for teacher review;
 - `GET /api/teacher/interventions?lesson_id=fractions&concept_id=unit_fraction` — create a teacher-reviewed suggestion from authored lesson content, including anonymous feedback counts.
-- `POST /api/teacher/interventions/feedback` — save a teacher rating (`helpful`, `partly_helpful`, or `not_helpful`) and optional note (maximum 500 characters).
+- `POST /api/teacher/interventions/feedback` — save a teacher-account-scoped rating (`helpful`, `partly_helpful`, or `not_helpful`) and optional note (maximum 500 characters).
 - `GET /api/teacher/interventions/feedback?lesson_id=fractions&concept_id=unit_fraction` — retrieve aggregate ratings only; individual notes are never returned. Fewer than three ratings are labelled a small sample.
 - `GET /api/learner/journey/{learner_id}` — chronological evidence history for an anonymous learner UUID. The student browser stores this random key locally and reuses it across sessions; clearing browser storage loses the association for future sessions. This is not a verified student identity or a validated measure of retention.
 
