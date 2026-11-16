@@ -456,7 +456,7 @@ def create_school_teacher_invite(payload: SchoolTeacherInviteRequest, admin: dic
     digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
     with db() as con:
         school = con.execute("SELECT school_id FROM school_admin_accounts WHERE id=?", (admin["id"],)).fetchone()
-        if con.execute("SELECT 1 FROM users WHERE email=?", (email,)).fetchone():
+        if con.execute("SELECT 1 FROM (SELECT email FROM users UNION ALL SELECT email FROM parent_accounts UNION ALL SELECT email FROM school_admin_accounts) WHERE email=?", (email,)).fetchone():
             raise HTTPException(409, "This email already has an account. Link the existing teacher instead.")
         con.execute("INSERT INTO school_teacher_invites(token_hash,school_id,email,expires_at) VALUES(?,?,?,?)",
                     (digest, school["school_id"], email, int(time.time()) + 7 * 86400))
