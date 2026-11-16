@@ -445,6 +445,7 @@ def test_school_admin_workspace_and_school_scope(tmp_path, monkeypatch):
         })
         assert second.status_code == 201
         assert admin_b.get("/api/school-admin/overview").json()["class_count"] == 0
+        assert admin_b.post("/api/school-admin/teachers", json={"teacher_email": "school-teacher@example.test"}).status_code == 409
         assert admin_b.post("/api/school-admin/teachers", json={"teacher_email": "missing@example.test"}).status_code == 404
         assert teacher.get("/api/school-admin/overview").status_code == 401
         assert admin_a.post("/api/auth/logout").status_code == 200
