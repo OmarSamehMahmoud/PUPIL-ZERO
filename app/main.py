@@ -24,7 +24,7 @@ from app.teacher_intelligence import build_review_priorities
 
 ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = ROOT / "pupil_zero.db"
-app = FastAPI(title="PUPIL ZERO", version="1.0.0", description="Local-first learning-by-teaching MVP")
+app = FastAPI(title="PUPIL ZERO", version="1.1.0", description="Local-first learning-by-teaching MVP")
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
 
@@ -32,6 +32,7 @@ class StartRequest(BaseModel):
     lesson_id: str = "fractions"
     persona: str = "milo"
     learner_id: str | None = Field(default=None, min_length=36, max_length=36)
+    class_id: str | None = None
 
 
 class MessageRequest(BaseModel):
@@ -87,6 +88,9 @@ def init_db() -> None:
             con.execute("ALTER TABLE sessions ADD COLUMN state_json TEXT NOT NULL DEFAULT '{}'")
         if "learner_id" not in columns:
             con.execute("ALTER TABLE sessions ADD COLUMN learner_id TEXT")
+        for column in ("student_id", "class_id", "teacher_id"):
+            if column not in columns:
+                con.execute("ALTER TABLE sessions ADD COLUMN " + column + " TEXT")
         con.execute("""CREATE TABLE IF NOT EXISTS users (
             id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, display_name TEXT NOT NULL,
             role TEXT NOT NULL CHECK(role IN ('teacher','student')),
@@ -147,6 +151,11 @@ def current_teacher(request: Request) -> dict[str, Any]:
     if not user or user.get("role") != "teacher": raise HTTPException(401, "Teacher authentication required")
     return user
 
+def current_student(request: Request) -> dict[str, Any]:
+    user = getattr(request.state, "user", None)
+    if not user or user.get("role") != "student": raise HTTPException(401, "Student authentication required")
+    return user
+
 @app.post("/api/auth/register-teacher", status_code=201)
 def register_teacher(payload: TeacherRegisterRequest, response: Response) -> dict[str, Any]:
     email = payload.email.strip().lower()
@@ -205,6 +214,12 @@ def list_classes(teacher: dict[str,Any] = Depends(current_teacher)) -> dict[str,
     with db() as con: rows=con.execute("SELECT c.id,c.name,c.grade_label,c.join_code,COUNT(m.student_id) AS student_count FROM classes c LEFT JOIN class_members m ON m.class_id=c.id WHERE c.teacher_id=? GROUP BY c.id",(teacher["id"],)).fetchall()
     return {"classes":[dict(row) for row in rows]}
 
+@app.get("/api/student/classes")
+def student_classes(student: dict[str,Any] = Depends(current_student)) -> dict[str,Any]:
+    with db() as con:
+        rows = con.execute("SELECT c.id,c.name,c.grade_label,c.teacher_id,u.display_name AS teacher_name FROM class_members m JOIN classes c ON c.id=m.class_id JOIN users u ON u.id=c.teacher_id WHERE m.student_id=? ORDER BY c.created_at DESC",(student["id"],)).fetchall()
+    return {"classes":[dict(row) for row in rows]}
+
 @app.get("/api/classes/{class_id}/members")
 def class_members(class_id: str, teacher: dict[str,Any] = Depends(current_teacher)) -> dict[str,Any]:
     with db() as con:
@@ -213,7 +228,7 @@ def class_members(class_id: str, teacher: dict[str,Any] = Depends(current_teache
     return {"members":[dict(row) for row in rows]}
 
 @app.post("/api/classes/join", status_code=201)
-def join_class(payload: StudentJoinRequest) -> dict[str,Any]:
+def join_class(payload: StudentJoinRequest, response: Response) -> dict[str,Any]:
     email=payload.email.strip().lower()
     if "@" not in email: raise HTTPException(422,"Enter a valid email address")
     with db() as con:
@@ -223,6 +238,9 @@ def join_class(payload: StudentJoinRequest) -> dict[str,Any]:
         try: con.execute("INSERT INTO users(id,email,display_name,role,password_salt,password_hash) VALUES(?,?,?,'student',?,?)",(student_id,email,payload.display_name.strip(),salt,digest))
         except sqlite3.IntegrityError as exc: raise HTTPException(409,"An account with this email already exists") from exc
         con.execute("INSERT INTO class_members(class_id,student_id) VALUES(?,?)",(classroom["id"],student_id))
+        token = new_session_token()
+        con.execute("INSERT INTO auth_sessions(token_hash,user_id,expires_at) VALUES(?,?,?)",(token_digest(token),student_id,int(time.time())+604800))
+    response.set_cookie("pupil_session",token,httponly=True,samesite="strict",max_age=604800,path="/")
     return {"student":{"id":student_id,"display_name":payload.display_name.strip()},"class":{"id":classroom["id"],"name":classroom["name"]}}
 
 @app.get("/account", response_class=HTMLResponse)
@@ -241,12 +259,12 @@ def teacher_home() -> str:
 
 
 @app.get("/api/teacher/sessions")
-def teacher_sessions(limit: int = Query(default=30, ge=1, le=100)) -> dict[str, Any]:
+def teacher_sessions(limit: int = Query(default=30, ge=1, le=100), teacher: dict[str,Any] = Depends(current_teacher)) -> dict[str, Any]:
     """Local prototype dashboard; protect the host before exposing beyond localhost."""
     with db() as con:
         rows = con.execute(
             "SELECT id, lesson_id, persona, transcript, created_at FROM sessions "
-            "ORDER BY created_at DESC LIMIT ?", (limit,)
+            "WHERE teacher_id=? ORDER BY created_at DESC LIMIT ?", (teacher["id"], limit)
         ).fetchall()
     items = []
     for row in rows:
@@ -265,11 +283,11 @@ def teacher_sessions(limit: int = Query(default=30, ge=1, le=100)) -> dict[str, 
             "coverage_signal": report["coverage_signal"],
             "label": report["label"],
         })
-    return {"sessions": items, "count": len(items), "notice": "Prototype dashboard: no login or role-based access yet. Keep the server on localhost."}
+    return {"sessions": items, "count": len(items), "notice": "Only sessions created within this teacher account are shown; legacy unassigned sessions are excluded."}
 
 
 @app.get("/api/teacher/insights")
-def teacher_insights(lesson_id: str | None = Query(default=None)) -> dict[str, Any]:
+def teacher_insights(lesson_id: str | None = Query(default=None), teacher: dict[str,Any] = Depends(current_teacher)) -> dict[str, Any]:
     """Aggregate cautious, session-level evidence signals for teacher review."""
     if lesson_id and not get_lesson(lesson_id):
         raise HTTPException(404, "Lesson not found")
@@ -277,12 +295,13 @@ def teacher_insights(lesson_id: str | None = Query(default=None)) -> dict[str, A
     with db() as con:
         if lesson_id:
             rows = con.execute(
-                "SELECT lesson_id, transcript, state_json FROM sessions WHERE lesson_id=?",
-                (lesson_id,),
+                "SELECT lesson_id, transcript, state_json FROM sessions WHERE lesson_id=? AND teacher_id=?",
+                (lesson_id, teacher["id"]),
             ).fetchall()
         else:
             rows = con.execute(
-                "SELECT lesson_id, transcript, state_json FROM sessions"
+                "SELECT lesson_id, transcript, state_json FROM sessions WHERE teacher_id=?",
+                (teacher["id"],)
             ).fetchall()
 
     grouped: dict[str, list[dict[str, Any]]] = {}
@@ -345,7 +364,7 @@ def teacher_insights(lesson_id: str | None = Query(default=None)) -> dict[str, A
     }
 
 @app.get("/api/teacher/interventions")
-def teacher_intervention_plan(lesson_id: str = Query(...), concept_id: str = Query(...)) -> dict[str, Any]:
+def teacher_intervention_plan(lesson_id: str = Query(...), concept_id: str = Query(...), teacher: dict[str,Any] = Depends(current_teacher)) -> dict[str, Any]:
     """Create a teacher-reviewed suggestion from authored lesson material."""
     lesson = get_lesson(lesson_id)
     if not lesson:
@@ -366,7 +385,7 @@ def teacher_intervention_plan(lesson_id: str = Query(...), concept_id: str = Que
 
 
 @app.post("/api/teacher/interventions/feedback", status_code=201)
-def save_intervention_feedback(payload: InterventionFeedbackRequest) -> dict[str, Any]:
+def save_intervention_feedback(payload: InterventionFeedbackRequest, teacher: dict[str,Any] = Depends(current_teacher)) -> dict[str, Any]:
     """Store an anonymous teacher rating; notes are optional and never exposed in aggregates."""
     lesson = get_lesson(payload.lesson_id)
     if not lesson:
@@ -382,7 +401,7 @@ def save_intervention_feedback(payload: InterventionFeedbackRequest) -> dict[str
 
 
 @app.get("/api/teacher/interventions/feedback")
-def intervention_feedback_summary(lesson_id: str = Query(...), concept_id: str = Query(...)) -> dict[str, Any]:
+def intervention_feedback_summary(lesson_id: str = Query(...), concept_id: str = Query(...), teacher: dict[str,Any] = Depends(current_teacher)) -> dict[str, Any]:
     lesson = get_lesson(lesson_id)
     if not lesson:
         raise HTTPException(404, "Lesson not found")
@@ -405,24 +424,27 @@ def intervention_feedback_summary(lesson_id: str = Query(...), concept_id: str =
 
 
 @app.get("/api/teacher/priorities")
-def teacher_priorities(lesson_id: str | None = Query(default=None)) -> dict[str, Any]:
+def teacher_priorities(lesson_id: str | None = Query(default=None), teacher: dict[str,Any] = Depends(current_teacher)) -> dict[str, Any]:
     """Return cautious teacher review priorities from aggregated local evidence."""
     insights = teacher_insights(lesson_id=lesson_id)
     return build_review_priorities(insights)
 
 
 @app.get("/api/learner/journey/{learner_id}")
-def learner_journey(learner_id: str) -> dict[str, Any]:
+def learner_journey(learner_id: str, request: Request) -> dict[str, Any]:
     """Return an anonymous learner's chronological evidence history."""
     try:
         learner_id = str(uuid.UUID(learner_id))
     except ValueError as exc:
         raise HTTPException(422, "learner_id must be a UUID") from exc
     with db() as con:
-        rows = con.execute(
-            "SELECT id, lesson_id, transcript, created_at FROM sessions "
-            "WHERE learner_id=? ORDER BY created_at ASC, id ASC", (learner_id,)
-        ).fetchall()
+        user = getattr(request.state, "user", None)
+        if user and user.get("role") == "student":
+            if learner_id != user["id"]:
+                raise HTTPException(403, "You can only view your own learning journey")
+            rows = con.execute("SELECT id, lesson_id, transcript, created_at FROM sessions WHERE student_id=? ORDER BY created_at ASC, id ASC", (user["id"],)).fetchall()
+        else:
+            rows = con.execute("SELECT id, lesson_id, transcript, created_at FROM sessions WHERE learner_id=? AND student_id IS NULL ORDER BY created_at ASC, id ASC", (learner_id,)).fetchall()
     records = []
     for row in rows:
         lesson = get_lesson(row["lesson_id"])
@@ -441,9 +463,9 @@ def learner_journey(learner_id: str) -> dict[str, Any]:
 
 
 @app.get("/api/teacher/sessions/{session_id}")
-def teacher_session_detail(session_id: str) -> dict[str, Any]:
+def teacher_session_detail(session_id: str, teacher: dict[str,Any] = Depends(current_teacher)) -> dict[str, Any]:
     with db() as con:
-        row = con.execute("SELECT * FROM sessions WHERE id=?", (session_id,)).fetchone()
+        row = con.execute("SELECT * FROM sessions WHERE id=? AND teacher_id=?", (session_id, teacher["id"])).fetchone()
     if not row:
         raise HTTPException(404, "Session not found")
     transcript = json.loads(row["transcript"])
@@ -461,7 +483,7 @@ def teacher_session_detail(session_id: str) -> dict[str, Any]:
 
 @app.get("/api/health")
 def health() -> dict[str, Any]:
-    return {"status": "ok", "product": "PUPIL ZERO", "version": "1.0.0", **public_status()}
+    return {"status": "ok", "product": "PUPIL ZERO", "version": "1.1.0", **public_status()}
 
 
 @app.get("/api/lessons")
@@ -471,23 +493,38 @@ def lessons() -> list[dict[str, str]]:
 
 
 @app.post("/api/sessions")
-def start_session(payload: StartRequest) -> dict[str, Any]:
+def start_session(payload: StartRequest, request: Request) -> dict[str, Any]:
     lesson = get_lesson(payload.lesson_id)
     if not lesson:
         raise HTTPException(404, "Lesson not found")
     if payload.persona not in {"milo", "noura", "zizo"}:
         raise HTTPException(422, "Unknown classmate persona")
     session_id = str(uuid.uuid4())
-    learner_id = payload.learner_id or str(uuid.uuid4())
+    user = getattr(request.state, "user", None)
+    student_id = class_id = teacher_id = None
+    if user and user.get("role") == "student":
+        if not payload.class_id:
+            raise HTTPException(422, "Choose a classroom before starting")
+        with db() as con:
+            membership = con.execute("SELECT c.id,c.teacher_id FROM class_members m JOIN classes c ON c.id=m.class_id WHERE m.class_id=? AND m.student_id=?", (payload.class_id, user["id"])).fetchone()
+        if not membership:
+            raise HTTPException(403, "You are not enrolled in this classroom")
+        student_id, class_id, teacher_id = user["id"], membership["id"], membership["teacher_id"]
+        learner_id = user["id"]
+    elif user and user.get("role") == "teacher":
+        teacher_id = user["id"]
+        learner_id = payload.learner_id or str(uuid.uuid4())
+    else:
+        learner_id = payload.learner_id or str(uuid.uuid4())
     try:
         learner_id = str(uuid.UUID(learner_id))
     except ValueError as exc:
         raise HTTPException(422, "learner_id must be a UUID") from exc
     with db() as con:
-        previous_states = con.execute(
-            "SELECT state_json FROM sessions WHERE learner_id=? AND lesson_id=? ORDER BY created_at DESC LIMIT 10",
-            (learner_id, payload.lesson_id),
-        ).fetchall()
+        if student_id:
+            previous_states = con.execute("SELECT state_json FROM sessions WHERE student_id=? AND lesson_id=? ORDER BY created_at DESC LIMIT 10", (student_id, payload.lesson_id)).fetchall()
+        else:
+            previous_states = con.execute("SELECT state_json FROM sessions WHERE learner_id=? AND lesson_id=? AND teacher_id IS ? ORDER BY created_at DESC LIMIT 10", (learner_id, payload.lesson_id, teacher_id)).fetchall()
     prior_review_targets: list[str] = []
     for previous in previous_states:
         try:
@@ -502,10 +539,10 @@ def start_session(payload: StartRequest) -> dict[str, Any]:
     transcript = [{"role": "ai", "text": opening}]
     with db() as con:
         con.execute(
-            "INSERT INTO sessions(id, lesson_id, persona, transcript, state_json, learner_id) VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO sessions(id, lesson_id, persona, transcript, state_json, learner_id, student_id, class_id, teacher_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (session_id, payload.lesson_id, payload.persona,
              json.dumps(transcript, ensure_ascii=False),
-             json.dumps(dialogue_state, ensure_ascii=False), learner_id),
+             json.dumps(dialogue_state, ensure_ascii=False), learner_id, student_id, class_id, teacher_id),
         )
     return {
         "session_id": session_id,
