@@ -1,3 +1,4 @@
+from datetime import date
 import sqlite3
 
 from fastapi.testclient import TestClient
