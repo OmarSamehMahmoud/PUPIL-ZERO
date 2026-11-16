@@ -80,6 +80,15 @@ class ParentRegisterRequest(BaseModel):
     password: str = Field(min_length=10, max_length=128)
     display_name: str = Field(min_length=2, max_length=80)
 
+class SchoolAdminRegisterRequest(BaseModel):
+    school_name: str = Field(min_length=2, max_length=120)
+    email: str = Field(min_length=5, max_length=254)
+    password: str = Field(min_length=10, max_length=128)
+    display_name: str = Field(min_length=2, max_length=80)
+
+class SchoolTeacherLinkRequest(BaseModel):
+    teacher_email: str = Field(min_length=5, max_length=254)
+
 
 class InterventionFeedbackRequest(BaseModel):
     lesson_id: str
@@ -153,6 +162,27 @@ def init_db() -> None:
             password_salt TEXT NOT NULL, password_hash TEXT NOT NULL,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         )""")
+        con.execute("""CREATE TABLE IF NOT EXISTS schools (
+            id TEXT PRIMARY KEY, name TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )""")
+        con.execute("""CREATE TABLE IF NOT EXISTS school_admin_accounts (
+            id TEXT PRIMARY KEY, school_id TEXT NOT NULL UNIQUE REFERENCES schools(id),
+            email TEXT NOT NULL UNIQUE, display_name TEXT NOT NULL,
+            password_salt TEXT NOT NULL, password_hash TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )""")
+        con.execute("""CREATE TABLE IF NOT EXISTS school_teachers (
+            school_id TEXT NOT NULL REFERENCES schools(id),
+            teacher_id TEXT NOT NULL REFERENCES users(id),
+            linked_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY(school_id, teacher_id)
+        )""")
+        con.execute("""CREATE TABLE IF NOT EXISTS school_classes (
+            school_id TEXT NOT NULL REFERENCES schools(id),
+            class_id TEXT NOT NULL REFERENCES classes(id),
+            PRIMARY KEY(school_id, class_id)
+        )""")
         con.execute("""CREATE TABLE IF NOT EXISTS guardian_invites (
             token_hash TEXT PRIMARY KEY, student_id TEXT NOT NULL, class_id TEXT NOT NULL,
             teacher_id TEXT NOT NULL, expires_at INTEGER NOT NULL, used_at TEXT,
@@ -187,7 +217,7 @@ async def teacher_auth_guard(request: Request, call_next):
     if token:
         with db() as con:
             user = con.execute(
-                "SELECT id,email,display_name,role FROM (SELECT u.id,u.email,u.display_name,u.role,s.token_hash,s.expires_at FROM auth_sessions s JOIN users u ON u.id=s.user_id UNION ALL SELECT p.id,p.email,p.display_name,'parent' AS role,s.token_hash,s.expires_at FROM auth_sessions s JOIN parent_accounts p ON p.id=s.user_id) WHERE token_hash=? AND expires_at>?",
+                "SELECT id,email,display_name,role FROM (SELECT u.id,u.email,u.display_name,u.role,s.token_hash,s.expires_at FROM auth_sessions s JOIN users u ON u.id=s.user_id UNION ALL SELECT p.id,p.email,p.display_name,'parent' AS role,s.token_hash,s.expires_at FROM auth_sessions s JOIN parent_accounts p ON p.id=s.user_id UNION ALL SELECT a.id,a.email,a.display_name,'school_admin' AS role,s.token_hash,s.expires_at FROM auth_sessions s JOIN school_admin_accounts a ON a.id=s.user_id) WHERE token_hash=? AND expires_at>?",
                 (token_digest(token), int(time.time())),
             ).fetchone()
     request.state.user = dict(user) if user else None
@@ -202,6 +232,11 @@ async def teacher_auth_guard(request: Request, call_next):
             if path == "/parent":
                 return HTMLResponse((ROOT / "static" / "parent.html").read_text(encoding="utf-8"))
             return JSONResponse({"detail": "Parent authentication required"}, status_code=401)
+    if path == "/school-admin" or path.startswith("/api/school-admin"):
+        if not user or user["role"] != "school_admin":
+            if path == "/school-admin":
+                return HTMLResponse((ROOT / "static" / "school_admin.html").read_text(encoding="utf-8"))
+            return JSONResponse({"detail": "School administrator authentication required"}, status_code=401)
     return await call_next(request)
 
 def current_teacher(request: Request) -> dict[str, Any]:
@@ -231,7 +266,7 @@ def register_teacher(payload: TeacherRegisterRequest, response: Response) -> dic
 def login(payload: LoginRequest, response: Response) -> dict[str, Any]:
     with db() as con:
         email = payload.email.strip().lower()
-        user=con.execute("SELECT id,email,display_name,role,password_salt,password_hash FROM users WHERE email=? UNION ALL SELECT id,email,display_name,'parent' AS role,password_salt,password_hash FROM parent_accounts WHERE email=?",(email,email)).fetchone()
+        user=con.execute("SELECT id,email,display_name,role,password_salt,password_hash FROM users WHERE email=? UNION ALL SELECT id,email,display_name,'parent' AS role,password_salt,password_hash FROM parent_accounts WHERE email=? UNION ALL SELECT id,email,display_name,'school_admin' AS role,password_salt,password_hash FROM school_admin_accounts WHERE email=?",(email,email,email)).fetchone()
     if not user or not verify_password(payload.password,user["password_salt"],user["password_hash"]): raise HTTPException(401,"Invalid email or password")
     token=new_session_token()
     with db() as con: con.execute("INSERT INTO auth_sessions(token_hash,user_id,expires_at) VALUES(?,?,?)",(token_digest(token),user["id"],int(time.time())+604800))
@@ -245,7 +280,7 @@ def auth_me(request: Request) -> dict[str, Any]:
         raise HTTPException(401, "Not authenticated")
     with db() as con:
         user = con.execute(
-            "SELECT id,email,display_name,role FROM (SELECT u.id,u.email,u.display_name,u.role,s.token_hash,s.expires_at FROM auth_sessions s JOIN users u ON u.id=s.user_id UNION ALL SELECT p.id,p.email,p.display_name,'parent' AS role,s.token_hash,s.expires_at FROM auth_sessions s JOIN parent_accounts p ON p.id=s.user_id) WHERE token_hash=? AND expires_at>?",
+            "SELECT id,email,display_name,role FROM (SELECT u.id,u.email,u.display_name,u.role,s.token_hash,s.expires_at FROM auth_sessions s JOIN users u ON u.id=s.user_id UNION ALL SELECT p.id,p.email,p.display_name,'parent' AS role,s.token_hash,s.expires_at FROM auth_sessions s JOIN parent_accounts p ON p.id=s.user_id UNION ALL SELECT a.id,a.email,a.display_name,'school_admin' AS role,s.token_hash,s.expires_at FROM auth_sessions s JOIN school_admin_accounts a ON a.id=s.user_id) WHERE token_hash=? AND expires_at>?",
             (token_digest(token), int(time.time())),
         ).fetchone()
     if not user:
@@ -267,6 +302,8 @@ def create_class(payload: ClassCreateRequest, teacher: dict[str,Any] = Depends(c
     with db() as con:
         while con.execute("SELECT 1 FROM classes WHERE join_code=?",(code,)).fetchone(): code=new_join_code()
         con.execute("INSERT INTO classes(id,teacher_id,name,grade_label,join_code) VALUES(?,?,?,?,?)",(class_id,teacher["id"],payload.name.strip(),payload.grade_label.strip(),code))
+        for link in con.execute("SELECT school_id FROM school_teachers WHERE teacher_id=?", (teacher["id"],)).fetchall():
+            con.execute("INSERT OR IGNORE INTO school_classes(school_id,class_id) VALUES(?,?)", (link["school_id"], class_id))
     return {"id":class_id,"name":payload.name.strip(),"grade_label":payload.grade_label.strip(),"join_code":code}
 
 @app.get("/api/classes")
@@ -365,6 +402,69 @@ def current_parent(request: Request) -> dict[str, Any]:
     if not user or user.get("role") != "parent":
         raise HTTPException(401, "Parent authentication required")
     return user
+
+
+def current_school_admin(request: Request) -> dict[str, Any]:
+    user = getattr(request.state, "user", None)
+    if not user or user.get("role") != "school_admin":
+        raise HTTPException(401, "School administrator authentication required")
+    return user
+
+
+@app.post("/api/auth/register-school-admin", status_code=201)
+def register_school_admin(payload: SchoolAdminRegisterRequest, response: Response) -> dict[str, Any]:
+    email = payload.email.strip().lower()
+    if "@" not in email:
+        raise HTTPException(422, "Enter a valid email address")
+    school_id, admin_id, token = str(uuid.uuid4()), str(uuid.uuid4()), new_session_token()
+    salt, digest = hash_password(payload.password)
+    with db() as con:
+        try:
+            con.execute("INSERT INTO schools(id,name) VALUES(?,?)", (school_id, payload.school_name.strip()))
+            con.execute("INSERT INTO school_admin_accounts(id,school_id,email,display_name,password_salt,password_hash) VALUES(?,?,?,?,?,?)",
+                        (admin_id, school_id, email, payload.display_name.strip(), salt, digest))
+            con.execute("INSERT INTO auth_sessions(token_hash,user_id,expires_at) VALUES(?,?,?)",
+                        (token_digest(token), admin_id, int(time.time()) + 604800))
+        except sqlite3.IntegrityError as exc:
+            raise HTTPException(409, "An account with this email already exists") from exc
+    response.set_cookie("pupil_session", token, httponly=True, samesite="strict", max_age=604800, path="/")
+    return {"user": {"id": admin_id, "email": email, "display_name": payload.display_name.strip(), "role": "school_admin"},
+            "school": {"id": school_id, "name": payload.school_name.strip()}}
+
+
+@app.post("/api/school-admin/teachers", status_code=201)
+def link_school_teacher(payload: SchoolTeacherLinkRequest, admin: dict[str, Any] = Depends(current_school_admin)) -> dict[str, Any]:
+    email = payload.teacher_email.strip().lower()
+    with db() as con:
+        school = con.execute("SELECT school_id FROM school_admin_accounts WHERE id=?", (admin["id"],)).fetchone()
+        teacher = con.execute("SELECT id,email,display_name FROM users WHERE email=? AND role='teacher'", (email,)).fetchone()
+        if not teacher:
+            raise HTTPException(404, "Teacher account not found. The teacher must register first.")
+        try:
+            con.execute("INSERT INTO school_teachers(school_id,teacher_id) VALUES(?,?)", (school["school_id"], teacher["id"]))
+        except sqlite3.IntegrityError:
+            raise HTTPException(409, "Teacher is already linked to this school")
+    return {"linked": True, "teacher": {"id": teacher["id"], "email": teacher["email"], "display_name": teacher["display_name"]}}
+
+
+@app.get("/api/school-admin/overview")
+def school_admin_overview(admin: dict[str, Any] = Depends(current_school_admin)) -> dict[str, Any]:
+    with db() as con:
+        school = con.execute("SELECT s.id,s.name FROM schools s JOIN school_admin_accounts a ON a.school_id=s.id WHERE a.id=?", (admin["id"],)).fetchone()
+        teachers = con.execute("""SELECT u.id,u.display_name,u.email,COUNT(DISTINCT sc.class_id) AS class_count
+            FROM school_teachers st JOIN users u ON u.id=st.teacher_id
+            LEFT JOIN school_classes sc ON sc.school_id=st.school_id
+            LEFT JOIN classes c ON c.id=sc.class_id AND c.teacher_id=u.id
+            WHERE st.school_id=? GROUP BY u.id ORDER BY u.display_name""", (school["id"],)).fetchall()
+        classes = con.execute("""SELECT c.id,c.name,c.grade_label,u.display_name AS teacher_name,
+            COUNT(DISTINCT m.student_id) AS student_count
+            FROM school_classes sc JOIN classes c ON c.id=sc.class_id
+            JOIN users u ON u.id=c.teacher_id LEFT JOIN class_members m ON m.class_id=c.id
+            WHERE sc.school_id=? GROUP BY c.id ORDER BY c.created_at DESC""", (school["id"],)).fetchall()
+    return {"school": dict(school), "teacher_count": len(teachers), "class_count": len(classes),
+            "student_enrollments": sum(row["student_count"] for row in classes),
+            "teachers": [dict(row) for row in teachers], "classes": [dict(row) for row in classes],
+            "notice": "Operational counts only; these are not grades or mastery scores."}
 
 
 @app.post("/api/teacher/students/{student_id}/guardian-invite", status_code=201)
