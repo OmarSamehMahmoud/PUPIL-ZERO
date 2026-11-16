@@ -210,3 +210,62 @@ def test_class_linked_student_sessions_are_scoped_to_their_teacher(tmp_path, mon
         assert teacher_b.get("/api/teacher/sessions").json()["count"] == 0
         assert teacher_b.get(f"/api/teacher/sessions/{session_id}").status_code == 404
         assert teacher_b.get(f"/api/classes/{classroom.json()['id']}/members").status_code == 404
+
+
+def test_assignment_lifecycle_and_class_isolation(tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "DB_PATH", tmp_path / "assignments.sqlite3")
+    with TestClient(main.app) as teacher, TestClient(main.app) as student, TestClient(main.app) as outsider:
+        assert teacher.post("/api/auth/register-teacher", json={
+            "email": "assign-teacher@example.test", "password": "TeacherPass123!", "display_name": "Assignment Teacher"
+        }).status_code == 201
+        classroom = teacher.post("/api/classes", json={"name": "Math A"})
+        assert classroom.status_code == 201
+        joined = student.post("/api/classes/join", json={
+            "join_code": classroom.json()["join_code"], "display_name": "Student One",
+            "email": "assignment-student@example.test", "password": "StudentPass123!"
+        })
+        assert joined.status_code == 201
+
+        created = teacher.post("/api/teacher/assignments", json={
+            "class_id": classroom.json()["id"], "title": "Explain fractions",
+            "description": "Use an example from daily life.", "lesson_id": "fractions"
+        })
+        assert created.status_code == 201
+        assignment_id = created.json()["id"]
+        assert teacher.get("/api/teacher/assignments").json()["assignments"][0]["student_count"] == 1
+        assert outsider.get("/api/teacher/assignments").status_code == 401
+        assert student.get("/api/student/assignments").json()["assignments"][0]["submitted"] == 0
+
+        wrong_lesson = student.post("/api/sessions", json={
+            "lesson_id": "decimals", "persona": "milo", "class_id": classroom.json()["id"],
+            "assignment_id": assignment_id
+        })
+        assert wrong_lesson.status_code == 422
+        started = student.post("/api/sessions", json={
+            "lesson_id": "fractions", "persona": "milo", "class_id": classroom.json()["id"],
+            "assignment_id": assignment_id
+        })
+        assert started.status_code == 200
+        session_id = started.json()["session_id"]
+        assert student.post("/api/message", json={
+            "session_id": session_id, "text": "الكسر نصف يعني جزء من جزأين متساويين"
+        }).status_code == 200
+        assert student.post("/api/finish", json={"session_id": session_id}).status_code == 200
+        student_task = student.get("/api/student/assignments").json()["assignments"][0]
+        assert student_task["submitted"] == 1
+        assert student_task["session_id"] == session_id
+        teacher_task = teacher.get("/api/teacher/assignments").json()["assignments"][0]
+        assert teacher_task["submitted_count"] == 1
+        assert teacher_task["submissions"][0]["display_name"] == "Student One"
+        duplicate = student.post("/api/sessions", json={
+            "lesson_id": "fractions", "persona": "milo", "class_id": classroom.json()["id"],
+            "assignment_id": assignment_id
+        })
+        assert duplicate.status_code == 409
+
+        assert outsider.post("/api/teacher/assignments", json={
+            "class_id": classroom.json()["id"], "title": "Cross class", "lesson_id": "fractions"
+        }).status_code == 401
+        assert teacher.post("/api/teacher/assignments", json={
+            "class_id": "not-owned", "title": "Cross class", "lesson_id": "fractions"
+        }).status_code == 404
