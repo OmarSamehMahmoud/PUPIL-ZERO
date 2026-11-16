@@ -1,14 +1,13 @@
-"""Local-first chat provider for PUPIL ZERO.
-
-Ollama is the default supported live provider. No student transcript is sent
-anywhere unless the operator explicitly configures a remote compatible URL.
-"""
+"""Local-first chat provider for PUPIL ZERO."""
 from __future__ import annotations
 
 import os
 from typing import Any
 
 import httpx
+from dotenv import load_dotenv
+
+load_dotenv()
 
 SYSTEM_TEMPLATE = """أنت MILO، زميل دراسة افتراضي لطيف وفضولي لطالب مدرسة في مصر.
 تحدث بعربية مصرية بسيطة، بجمل قصيرة ومناسبة لعمر الطالب.
@@ -51,14 +50,14 @@ def public_status() -> dict[str, Any]:
 
 
 def build_system_prompt(lesson: dict[str, Any], persona: str) -> str:
-    concepts = "\\n".join(
+    concepts = "\n".join(
         f"- {item['label_ar']}: {item['misconception']}"
         for item in lesson.get("concepts", [])
     )
     context = (
-        f"عنوان الدرس: {lesson['title_ar']}\\n"
-        f"الأهداف: {'؛ '.join(lesson.get('learning_objectives', []))}\\n"
-        f"نقاط قد يختلط فهمها: \\n{concepts}"
+        f"عنوان الدرس: {lesson['title_ar']}\n"
+        f"الأهداف: {'؛ '.join(lesson.get('learning_objectives', []))}\n"
+        f"نقاط قد يختلط فهمها: \n{concepts}"
     )
     return SYSTEM_TEMPLATE.format(
         persona=PERSONAS.get(persona, PERSONAS["milo"]),
@@ -83,30 +82,29 @@ async def generate_reply(
         role = "assistant" if item["role"] == "ai" else "user"
         chat_messages.append({"role": role, "content": item["text"]})
 
-    timeout = httpx.Timeout(45.0, connect=5.0)
+    timeout = httpx.Timeout(60.0, connect=5.0)
     async with httpx.AsyncClient(timeout=timeout) as client:
         if provider == "ollama":
-            url = f"{cfg['base_url']}/api/chat"
-            response = await client.post(url, json={
-                "model": cfg["model"],
-                "messages": chat_messages,
-                "stream": False,
-                "options": {"temperature": 0.65},
-            })
+            response = await client.post(
+                f"{cfg['base_url']}/api/chat",
+                json={
+                    "model": cfg["model"],
+                    "messages": chat_messages,
+                    "stream": False,
+                    "options": {"temperature": 0.65},
+                },
+            )
             response.raise_for_status()
-            data = response.json()
-            answer = data.get("message", {}).get("content", "")
+            answer = response.json().get("message", {}).get("content", "")
         else:
-            url = f"{cfg['base_url']}/v1/chat/completions"
             headers = {"Authorization": f"Bearer {cfg['api_key']}"} if cfg["api_key"] else {}
-            response = await client.post(url, headers=headers, json={
-                "model": cfg["model"],
-                "messages": chat_messages,
-                "temperature": 0.65,
-            })
+            response = await client.post(
+                f"{cfg['base_url']}/v1/chat/completions",
+                headers=headers,
+                json={"model": cfg["model"], "messages": chat_messages, "temperature": 0.65},
+            )
             response.raise_for_status()
-            data = response.json()
-            choices = data.get("choices", [])
+            choices = response.json().get("choices", [])
             answer = choices[0].get("message", {}).get("content", "") if choices else ""
 
     answer = str(answer).strip()
