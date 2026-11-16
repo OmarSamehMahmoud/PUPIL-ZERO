@@ -1,6 +1,6 @@
 # PUPIL ZERO
 
-**Prototype version: 0.5.0**
+**Prototype version: 0.6.0**
 
 **Teach an AI. Discover what you really know.**
 
@@ -15,7 +15,7 @@ PUPIL ZERO is an Arabic-first, learning-by-teaching prototype. A learner explain
 - Three original mathematics demonstrator lessons: fractions, decimals, and introductory ratios.
 - Local Ollama integration and OpenAI-compatible chat endpoint support.
 - Explicit demo fallback when no model is configured; if a configured model is unavailable, the app reports an error instead of pretending demo text is live AI.
-- Teacher dashboard at `/teacher` with session list, transcript detail, conservative keyword-evidence signals, lesson-level class insight aggregation, and evidence-grounded review-priority suggestions with small-sample warnings.
+- Teacher dashboard at `/teacher` with session list, transcript detail, conservative keyword-evidence signals, lesson-level class insight aggregation, evidence-grounded review-priority suggestions with small-sample warnings, and an anonymous learner journey that compares per-session evidence over time.
 
 ## Run locally with Ollama
 
@@ -95,6 +95,7 @@ Tests are committed and a GitHub Actions workflow runs them on pushes and pull r
 - `GET /api/teacher/sessions/{session_id}` — transcript and report for one session.
 - `GET /api/teacher/insights` — aggregate evidence and review signals by lesson; optional `lesson_id` filter. These are not mastery scores.
 - `GET /api/teacher/priorities` — rank concepts flagged for teacher review; optional `lesson_id` filter. Small samples are explicitly marked insufficient, and priorities are not diagnoses or mastery scores.
+- `GET /api/learner/journey/{learner_id}` — chronological evidence history for an anonymous learner UUID. The student browser stores this random key locally and reuses it across sessions; clearing browser storage loses the association for future sessions. This is not a verified student identity or a validated measure of retention.
 
 ## Curriculum status and rights
 
@@ -104,7 +105,7 @@ The lesson content in this repository is original demonstrator content, not copi
 
 - The teacher dashboard currently has no authentication or role-based access. Keep the service bound to localhost; do not expose it to a school network or the public internet in this state.
 - Before any real pilot with minors, obtain school and parent/guardian approvals, define retention/deletion rules, and implement authentication and access controls.
-- Avoid collecting names, phone numbers, precise location, face/video, or raw voice recordings.
+- Avoid collecting names, phone numbers, precise location, face/video, or raw voice recordings. The journey feature uses a random browser-local UUID rather than a name or account; it is a pseudonymous identifier, so protect the local database and browser profile.
 - Local Ollama inference sends text to the configured local Ollama endpoint. Do not configure a remote endpoint if local-only processing is required.
 - Browser speech recognition may use a browser vendor's cloud service and is not guaranteed offline. Text chat remains available.
 - The report is a simple keyword-matching signal, not a validated measure of learning and not a school grade. Teacher review is required.
