@@ -1,6 +1,6 @@
 # PUPIL ZERO
 
-**Prototype version: 0.6.0**
+**Prototype version: 0.7.0**
 
 **Teach an AI. Discover what you really know.**
 
@@ -11,6 +11,7 @@ PUPIL ZERO is an Arabic-first, learning-by-teaching prototype. A learner explain
 - FastAPI backend and SQLite session history.
 - Arabic RTL student experience, responsive layout, text chat, and optional browser speech input/output.
 - Three selectable classmates: MILO, NOURA, and ZIZO. Each has a distinct prompt profile.
+- Cross-session adaptive scenario selection: a new session can start with an authored scenario matching a concept flagged for review in the learner's previous sessions. The routing reason is returned by the session API; no difficulty or mastery claim is made.
 - Persistent adaptive dialogue state per session: elicit, clarify, transfer, and reflect stages, with misconception review targets. These are conversation-routing signals, not mastery labels.
 - Three original mathematics demonstrator lessons: fractions, decimals, and introductory ratios.
 - Local Ollama integration and OpenAI-compatible chat endpoint support.
