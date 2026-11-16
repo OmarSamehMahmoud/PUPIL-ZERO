@@ -24,7 +24,7 @@ from app.teacher_intelligence import build_review_priorities
 
 ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = ROOT / "pupil_zero.db"
-app = FastAPI(title="PUPIL ZERO", version="1.2.0", description="Local-first learning-by-teaching MVP")
+app = FastAPI(title="PUPIL ZERO", version="1.3.0", description="Local-first learning-by-teaching MVP")
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
 
@@ -527,6 +527,108 @@ def teacher_priorities(lesson_id: str | None = Query(default=None), class_id: st
     return build_review_priorities(insights)
 
 
+def _student_progress(student_id: str, class_id: str | None = None) -> dict[str, Any]:
+    with db() as con:
+        query = "SELECT id,lesson_id,transcript,created_at FROM sessions WHERE student_id=?"
+        params: list[Any] = [student_id]
+        if class_id:
+            query += " AND class_id=?"
+            params.append(class_id)
+        query += " ORDER BY created_at ASC,id ASC"
+        rows = con.execute(query, tuple(params)).fetchall()
+    records = []
+    lesson_counts: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        lesson = get_lesson(row["lesson_id"])
+        if not lesson:
+            continue
+        try:
+            transcript = json.loads(row["transcript"] or "[]")
+        except (TypeError, json.JSONDecodeError):
+            transcript = []
+        report = assess_explanation(transcript if isinstance(transcript, list) else [], lesson)
+        records.append({
+            "session_id": row["id"], "lesson_id": row["lesson_id"],
+            "lesson": lesson["title_ar"], "created_at": row["created_at"],
+            "report": report,
+        })
+        item = lesson_counts.setdefault(row["lesson_id"], {
+            "lesson_id": row["lesson_id"], "lesson": lesson["title_ar"],
+            "sessions": 0, "sessions_with_student_responses": 0,
+        })
+        item["sessions"] += 1
+        if any(message.get("role") == "student" for message in transcript if isinstance(message, dict)):
+            item["sessions_with_student_responses"] += 1
+    journey = build_learning_journey(records)
+    return {
+        "student_id": student_id,
+        "class_id": class_id,
+        "session_count": journey["session_count"],
+        "lessons": sorted(lesson_counts.values(), key=lambda item: item["lesson"]),
+        "concepts": journey["concepts"],
+        "timeline": journey["timeline"],
+        "notice": journey["notice"],
+        "interpretation_warning": "هذه مؤشرات وصفية مبنية على مطابقة كلمات فقط؛ لا تمثل درجات أو تشخيصًا أو إثباتًا للإتقان.",
+    }
+
+
+@app.get("/api/student/progress")
+def student_progress(class_id: str | None = Query(default=None), student: dict[str, Any] = Depends(current_student)) -> dict[str, Any]:
+    if class_id:
+        with db() as con:
+            membership = con.execute(
+                "SELECT 1 FROM class_members WHERE class_id=? AND student_id=?",
+                (class_id, student["id"]),
+            ).fetchone()
+        if not membership:
+            raise HTTPException(404, "Class not found")
+    return _student_progress(student["id"], class_id)
+
+
+@app.get("/api/teacher/classes/{class_id}/progress")
+def teacher_class_progress(class_id: str, teacher: dict[str, Any] = Depends(current_teacher)) -> dict[str, Any]:
+    with db() as con:
+        classroom = con.execute(
+            "SELECT id,name FROM classes WHERE id=? AND teacher_id=?",
+            (class_id, teacher["id"]),
+        ).fetchone()
+        if not classroom:
+            raise HTTPException(404, "Class not found")
+        students = con.execute(
+            "SELECT u.id,u.display_name,u.email,m.joined_at FROM class_members m JOIN users u ON u.id=m.student_id WHERE m.class_id=? ORDER BY u.display_name",
+            (class_id,),
+        ).fetchall()
+    results = []
+    for student in students:
+        progress = _student_progress(student["id"], class_id)
+        results.append({
+            "student_id": student["id"], "display_name": student["display_name"],
+            "joined_at": student["joined_at"], "session_count": progress["session_count"],
+            "lesson_count": len(progress["lessons"]),
+            "evidence_concepts": sum(item["sessions_with_evidence"] for item in progress["concepts"]),
+            "concepts_observed": len(progress["concepts"]),
+        })
+    return {
+        "class_id": class_id, "class_name": classroom["name"],
+        "student_count": len(results), "students": results,
+        "notice": "مؤشرات وصفية من الجلسات المسجلة فقط. عدم وجود جلسة لا يعني عدم التعلم، ومطابقة الكلمات ليست درجة أو مقياس إتقان.",
+    }
+
+
+@app.get("/api/teacher/students/{student_id}/progress")
+def teacher_student_progress(student_id: str, class_id: str = Query(...), teacher: dict[str, Any] = Depends(current_teacher)) -> dict[str, Any]:
+    with db() as con:
+        membership = con.execute(
+            "SELECT 1 FROM class_members m JOIN classes c ON c.id=m.class_id WHERE m.student_id=? AND m.class_id=? AND c.teacher_id=?",
+            (student_id, class_id, teacher["id"]),
+        ).fetchone()
+    if not membership:
+        raise HTTPException(404, "Student progress not found")
+    progress = _student_progress(student_id, class_id)
+    progress["notice"] += " هذا العرض مقتصر على الفصل المحدد."
+    return progress
+
+
 @app.get("/api/learner/journey/{learner_id}")
 def learner_journey(learner_id: str, request: Request) -> dict[str, Any]:
     """Return an anonymous learner's chronological evidence history."""
@@ -580,7 +682,7 @@ def teacher_session_detail(session_id: str, teacher: dict[str,Any] = Depends(cur
 
 @app.get("/api/health")
 def health() -> dict[str, Any]:
-    return {"status": "ok", "product": "PUPIL ZERO", "version": "1.2.0", **public_status()}
+    return {"status": "ok", "product": "PUPIL ZERO", "version": "1.3.0", **public_status()}
 
 
 @app.get("/api/lessons")
