@@ -35,4 +35,16 @@ def test_student_and_teacher_flow_uses_local_database(tmp_path, monkeypatch):
         updated = client.get(f"/api/teacher/sessions/{session_id}")
         assert updated.json()["dialogue_state"]["scenario_index"] == 1
 
+        insights = client.get("/api/teacher/insights")
+        assert insights.status_code == 200
+        assert insights.json()["total_sessions"] == 1
+        assert insights.json()["lessons"][0]["lesson_id"] == "decimals"
+        assert len(insights.json()["lessons"][0]["concepts"]) == 2
+
+        filtered = client.get("/api/teacher/insights?lesson_id=fractions")
+        assert filtered.status_code == 200
+        assert filtered.json()["total_sessions"] == 0
+        unknown = client.get("/api/teacher/insights?lesson_id=unknown")
+        assert unknown.status_code == 404
+
         assert client.get("/teacher").status_code == 200
