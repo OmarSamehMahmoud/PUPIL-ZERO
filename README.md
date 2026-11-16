@@ -93,6 +93,7 @@ Tests are committed and a GitHub Actions workflow runs them on pushes and pull r
 - `POST /api/finish` — return transcript, formative evidence report, and current dialogue state.
 - `GET /api/teacher/sessions` — recent local sessions.
 - `GET /api/teacher/sessions/{session_id}` — transcript and report for one session.
+- `GET /api/teacher/insights` — aggregate evidence and review signals by lesson; optional `lesson_id` filter. These are not mastery scores.
 
 ## Curriculum status and rights
 
