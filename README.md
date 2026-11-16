@@ -1,6 +1,6 @@
 # PUPIL ZERO
 
-**Prototype version: 0.9.0**
+**Prototype version: 1.0.0**
 
 **Teach an AI. Discover what you really know.**
 
@@ -9,6 +9,9 @@ PUPIL ZERO is an Arabic-first, learning-by-teaching prototype. A learner explain
 ## Current features
 
 - FastAPI backend and SQLite session history.
+- Local teacher accounts with scrypt password hashing, opaque random sessions stored as SHA-256 token digests, HttpOnly/SameSite cookies, login/logout, and a protected teacher dashboard/API.
+- Classroom registry: teachers can create classes with join codes, students can create accounts and join with a code, and teachers can view their class roster.
+- Arabic account portal at `/account`.
 - Arabic RTL student experience, responsive layout, text chat, and optional browser speech input/output.
 - Three selectable classmates: MILO, NOURA, and ZIZO. Each has a distinct prompt profile.
 - Cross-session adaptive scenario selection: a new session can start with an authored scenario matching a concept flagged for review in the learner's previous sessions. The routing reason is returned by the session API; no difficulty or mastery claim is made.
@@ -66,7 +69,8 @@ PUPIL ZERO is an Arabic-first, learning-by-teaching prototype. A learner explain
 
 7. Open:
    - Student experience: http://127.0.0.1:8000
-   - Teacher dashboard: http://127.0.0.1:8000/teacher
+   - Account portal: http://127.0.0.1:8000/account
+   - Teacher dashboard (requires teacher login): http://127.0.0.1:8000/teacher
    - API health: http://127.0.0.1:8000/api/health
    - Interactive API docs: http://127.0.0.1:8000/docs
 
@@ -89,6 +93,14 @@ Tests are committed and a GitHub Actions workflow runs them on pushes and pull r
 
 ## API
 
+- `POST /api/auth/register-teacher` — create a local teacher account (password minimum 10 characters).
+- `POST /api/auth/login` / `POST /api/auth/logout` — sign in/out using an HttpOnly local session cookie.
+- `GET /api/auth/me` — current account profile.
+- `POST /api/classes` — create a class as the authenticated teacher; returns an eight-character join code.
+- `GET /api/classes` — list the authenticated teacher's classes.
+- `GET /api/classes/{class_id}/members` — list members of a class owned by the authenticated teacher.
+- `POST /api/classes/join` — create a student account and enroll it using a class join code.
+
 - `GET /api/health` — app and configured inference mode.
 - `GET /api/lessons` — demonstrator lesson catalog.
 - `POST /api/sessions` — create a session. JSON: `{"lesson_id":"fractions","persona":"milo"}`.
@@ -109,7 +121,9 @@ The lesson content in this repository is original demonstrator content, not copi
 
 ## Safety, privacy, and limitations
 
-- The teacher dashboard currently has no authentication or role-based access. Keep the service bound to localhost; do not expose it to a school network or the public internet in this state.
+- This is an authentication and class-management foundation, not a production-ready multi-school deployment. Existing learning sessions and aggregate reports have not yet been fully linked to class memberships and teacher ownership; do not use it to store real student records or expose it to a school network/public internet yet.
+- Student class enrollment is implemented, but a complete student sign-in/classroom learning portal and class-scoped learning history are still pending.
+- Account registration is open in this local prototype. Before deployment, add administrator-controlled teacher invitations, rate limiting, password reset/recovery, secure HTTPS cookie configuration, CSRF protection appropriate to the deployment, audit logging, and a reviewed data-retention/deletion workflow.
 - Before any real pilot with minors, obtain school and parent/guardian approvals, define retention/deletion rules, and implement authentication and access controls.
 - Avoid collecting names, phone numbers, precise location, face/video, or raw voice recordings. The journey feature uses a random browser-local UUID rather than a name or account; it is a pseudonymous identifier, so protect the local database and browser profile.
 - Local Ollama inference sends text to the configured local Ollama endpoint. Do not configure a remote endpoint if local-only processing is required.
