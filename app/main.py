@@ -15,10 +15,11 @@ from app.assessment import assess_explanation
 from app.curriculum import get_lesson
 from app.llm import generate_reply, public_status
 from app.pedagogy import advance_state, initial_state, state_context
+from app.teacher_intelligence import build_review_priorities
 
 ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = ROOT / "pupil_zero.db"
-app = FastAPI(title="PUPIL ZERO", version="0.4.0", description="Local-first learning-by-teaching MVP")
+app = FastAPI(title="PUPIL ZERO", version="0.5.0", description="Local-first learning-by-teaching MVP")
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
 
@@ -174,6 +175,13 @@ def teacher_insights(lesson_id: str | None = Query(default=None)) -> dict[str, A
     }
 
 
+@app.get("/api/teacher/priorities")
+def teacher_priorities(lesson_id: str | None = Query(default=None)) -> dict[str, Any]:
+    """Return cautious teacher review priorities from aggregated local evidence."""
+    insights = teacher_insights(lesson_id=lesson_id)
+    return build_review_priorities(insights)
+
+
 @app.get("/api/teacher/sessions/{session_id}")
 def teacher_session_detail(session_id: str) -> dict[str, Any]:
     with db() as con:
@@ -195,7 +203,7 @@ def teacher_session_detail(session_id: str) -> dict[str, Any]:
 
 @app.get("/api/health")
 def health() -> dict[str, Any]:
-    return {"status": "ok", "product": "PUPIL ZERO", "version": "0.4.0", **public_status()}
+    return {"status": "ok", "product": "PUPIL ZERO", "version": "0.5.0", **public_status()}
 
 
 @app.get("/api/lessons")
