@@ -169,7 +169,7 @@ def make_demo_reply(student_text: str, count: int, lesson_title: str, stage: str
 
 
 @app.post("/api/message")
-async def send_message(payload: MessageRequest) -> dict[str, str]:
+async def send_message(payload: MessageRequest) -> dict[str, Any]:
     with db() as con:
         row = con.execute("SELECT * FROM sessions WHERE id=?", (payload.session_id,)).fetchone()
     if not row:
