@@ -197,6 +197,8 @@ def test_class_linked_student_sessions_are_scoped_to_their_teacher(tmp_path, mon
         }).status_code == 403
 
         assert teacher_a.get("/api/teacher/sessions").json()["count"] == 1
+        assert teacher_a.get("/api/teacher/sessions?class_id=" + classroom.json()["id"]).json()["count"] == 1
+        assert teacher_a.get("/api/teacher/insights?class_id=not-owned").status_code == 404
         assert teacher_a.get(f"/api/teacher/sessions/{session_id}").status_code == 200
         assert student.post("/api/message", json={
             "session_id": session_id, "text": "الكسر يمثل جزءًا من كل"
