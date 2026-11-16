@@ -27,5 +27,12 @@ def test_student_and_teacher_flow_uses_local_database(tmp_path, monkeypatch):
         assert detail.status_code == 200
         assert detail.json()["lesson"] == "فهم الأعداد العشرية"
         assert detail.json()["transcript"][0]["role"] == "ai"
+        assert detail.json()["dialogue_state"]["stage"] == "elicit"
+
+        message = client.post("/api/message", json={"session_id": session_id, "text": "نفس الحجم والقطعة أصغر"})
+        assert message.status_code == 200
+        assert message.json()["stage"] == "transfer"
+        updated = client.get(f"/api/teacher/sessions/{session_id}")
+        assert updated.json()["dialogue_state"]["scenario_index"] == 1
 
         assert client.get("/teacher").status_code == 200
