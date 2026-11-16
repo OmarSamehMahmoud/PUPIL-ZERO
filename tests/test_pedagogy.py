@@ -34,3 +34,14 @@ def test_reflection_context_does_not_claim_mastery():
     prompt = state_context(state, lesson)
     assert "لا تمنحه درجة" in prompt
     assert "الإتقان" in prompt
+
+
+def test_reflection_stage_is_stable_after_session_reaches_the_end():
+    lesson = get_lesson("fractions")
+    state = initial_state(lesson)
+    state["stage"] = "reflect"
+    state["scenario_index"] = len(lesson["scenarios"])
+    updated = advance_state(state, "اتعلمت الفكرة", lesson)
+    assert updated["stage"] == "reflect"
+    assert updated["scenario_index"] == len(lesson["scenarios"])
+    assert updated["turns"] == 1
