@@ -403,3 +403,49 @@ def test_guardian_invite_parent_portal_and_pdf_are_scoped(tmp_path, monkeypatch)
         assert reused.status_code == 400
         assert student.get("/api/parent/students").status_code == 401
         assert teacher.get("/api/parent/students").status_code == 401
+
+
+def test_school_admin_workspace_and_school_scope(tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "DB_PATH", tmp_path / "schools.sqlite3")
+    with TestClient(main.app) as admin_a, TestClient(main.app) as teacher, TestClient(main.app) as student, TestClient(main.app) as admin_b:
+        created = admin_a.post("/api/auth/register-school-admin", json={
+            "school_name": "North School", "email": "admin-a@example.test",
+            "password": "SchoolAdmin123!", "display_name": "School Admin"
+        })
+        assert created.status_code == 201
+        assert created.json()["user"]["role"] == "school_admin"
+        assert admin_a.get("/api/auth/me").json()["user"]["role"] == "school_admin"
+        assert admin_a.get("/api/school-admin/overview").json()["school"]["name"] == "North School"
+        assert admin_a.get("/api/teacher/sessions").status_code == 401
+
+        assert teacher.post("/api/auth/register-teacher", json={
+            "email": "school-teacher@example.test", "password": "TeacherPass123!", "display_name": "School Teacher"
+        }).status_code == 201
+        linked = admin_a.post("/api/school-admin/teachers", json={"teacher_email": "school-teacher@example.test"})
+        assert linked.status_code == 201
+        assert admin_a.post("/api/school-admin/teachers", json={"teacher_email": "school-teacher@example.test"}).status_code == 409
+        classroom = teacher.post("/api/classes", json={"name": "North Grade 5"})
+        assert classroom.status_code == 201
+
+        joined = student.post("/api/classes/join", json={
+            "join_code": classroom.json()["join_code"], "display_name": "Learner",
+            "email": "school-learner@example.test", "password": "StudentPass123!"
+        })
+        assert joined.status_code == 201
+        overview = admin_a.get("/api/school-admin/overview")
+        assert overview.status_code == 200
+        assert overview.json()["teacher_count"] == 1
+        assert overview.json()["class_count"] == 1
+        assert overview.json()["student_enrollments"] == 1
+        assert overview.json()["classes"][0]["teacher_name"] == "School Teacher"
+
+        second = admin_b.post("/api/auth/register-school-admin", json={
+            "school_name": "South School", "email": "admin-b@example.test",
+            "password": "SchoolAdmin456!", "display_name": "Other Admin"
+        })
+        assert second.status_code == 201
+        assert admin_b.get("/api/school-admin/overview").json()["class_count"] == 0
+        assert admin_b.post("/api/school-admin/teachers", json={"teacher_email": "missing@example.test"}).status_code == 404
+        assert teacher.get("/api/school-admin/overview").status_code == 401
+        assert admin_a.post("/api/auth/logout").status_code == 200
+        assert admin_a.get("/api/school-admin/overview").status_code == 401
