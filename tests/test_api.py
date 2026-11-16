@@ -45,6 +45,11 @@ def test_student_and_teacher_flow_uses_local_database(tmp_path, monkeypatch):
         })
         assert joined.status_code == 201
         assert joined.json()["class"]["name"] == "Class 1"
+        # Joining creates a student login cookie; restore the teacher session for roster checks.
+        assert client.get("/api/auth/me").json()["user"]["role"] == "student"
+        assert client.post("/api/auth/login", json={
+            "email": "teacher@example.test", "password": "StrongPass123!"
+        }).status_code == 200
         members = client.get(f"/api/classes/{classroom.json()['id']}/members")
         assert members.status_code == 200
         assert len(members.json()["members"]) == 1
@@ -155,4 +160,51 @@ def test_init_db_migrates_legacy_sessions_table(tmp_path, monkeypatch):
     main.init_db()
     with sqlite3.connect(path) as con:
         columns = {row[1] for row in con.execute("PRAGMA table_info(sessions)")}
-    assert "learner_id" in columns
+    assert {"learner_id", "student_id", "class_id", "teacher_id"} <= columns
+
+
+
+def test_class_linked_student_sessions_are_scoped_to_their_teacher(tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "DB_PATH", tmp_path / "class_scope.sqlite3")
+    with TestClient(main.app) as teacher_a, TestClient(main.app) as student, TestClient(main.app) as teacher_b:
+        a = teacher_a.post("/api/auth/register-teacher", json={
+            "email": "a@example.test", "password": "TeacherPass123!", "display_name": "Teacher A"
+        })
+        assert a.status_code == 201
+        classroom = teacher_a.post("/api/classes", json={"name": "A Class"})
+        assert classroom.status_code == 201
+
+        joined = student.post("/api/classes/join", json={
+            "join_code": classroom.json()["join_code"], "display_name": "Learner",
+            "email": "learner@example.test", "password": "StudentPass123!"
+        })
+        assert joined.status_code == 201
+        student_id = joined.json()["student"]["id"]
+        assert student.get("/api/auth/me").json()["user"]["role"] == "student"
+        assert student.get("/api/student/classes").json()["classes"][0]["id"] == classroom.json()["id"]
+        assert student.get("/api/teacher/sessions").status_code == 401
+
+        started = student.post("/api/sessions", json={
+            "lesson_id": "fractions", "persona": "milo", "class_id": classroom.json()["id"]
+        })
+        assert started.status_code == 200
+        assert started.json()["learner_id"] == student_id
+        session_id = started.json()["session_id"]
+        assert student.get(f"/api/learner/journey/{student_id}").json()["session_count"] == 1
+        assert student.get("/api/learner/journey/12345678-1234-4234-8234-123456789abc").status_code == 403
+        assert student.post("/api/sessions", json={
+            "lesson_id": "fractions", "persona": "milo", "class_id": "not-enrolled"
+        }).status_code == 403
+
+        assert teacher_a.get("/api/teacher/sessions").json()["count"] == 1
+        assert teacher_a.get(f"/api/teacher/sessions/{session_id}").status_code == 200
+        assert student.post("/api/message", json={
+            "session_id": session_id, "text": "الكسر يمثل جزءًا من كل"
+        }).status_code == 200
+
+        teacher_b.post("/api/auth/register-teacher", json={
+            "email": "b@example.test", "password": "TeacherPass123!", "display_name": "Teacher B"
+        })
+        assert teacher_b.get("/api/teacher/sessions").json()["count"] == 0
+        assert teacher_b.get(f"/api/teacher/sessions/{session_id}").status_code == 404
+        assert teacher_b.get(f"/api/classes/{classroom.json()['id']}/members").status_code == 404
