@@ -98,3 +98,20 @@ def build_study_plan(lesson: dict[str, Any], reports: list[dict[str, Any]]) -> d
         "limitations": ["قد لا تلتقط مطابقة الكلمات المعنى المقصود أو اختلاف اللهجة والإملاء.",
                         "راجع الشرح والسياق مع المعلم قبل اتخاذ قرار تعليمي."],
     }
+
+
+
+def validate_question_set(questions: list[dict[str, Any]], lesson: dict[str, Any]) -> list[dict[str, Any]]:
+    """Final server-side allow-list check before storing model output."""
+    allowed = {item["id"] for item in lesson.get("concepts", [])}
+    if not isinstance(questions, list) or not questions:
+        raise ValueError("No questions were generated")
+    for question in questions:
+        if question.get("concept_id") not in allowed:
+            raise ValueError("Question concept is outside this lesson")
+        if len(question.get("options", [])) != 3:
+            raise ValueError("Each question must have three options")
+        ids = [option.get("id") for option in question["options"]]
+        if len(set(ids)) != 3 or question.get("correct_option") not in ids:
+            raise ValueError("Question answer key is invalid")
+    return questions
