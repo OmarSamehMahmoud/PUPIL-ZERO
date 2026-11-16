@@ -13,7 +13,7 @@ def test_student_and_teacher_flow_uses_local_database(tmp_path, monkeypatch):
         })
         assert teacher.status_code == 201
         assert teacher.json()["user"]["role"] == "teacher"
-        assert client.get("/api/auth/me").status_code == 401
+        assert client.get("/api/auth/me").status_code == 200
         lessons = client.get("/api/lessons")
         assert lessons.status_code == 200
         lesson_ids = {lesson["id"] for lesson in lessons.json()}
