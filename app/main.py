@@ -263,13 +263,19 @@ def teacher_home() -> str:
 
 
 @app.get("/api/teacher/sessions")
-def teacher_sessions(limit: int = Query(default=30, ge=1, le=100), teacher: dict[str,Any] = Depends(current_teacher)) -> dict[str, Any]:
-    """Local prototype dashboard; protect the host before exposing beyond localhost."""
+def teacher_sessions(limit: int = Query(default=30, ge=1, le=100), class_id: str | None = Query(default=None), teacher: dict[str,Any] = Depends(current_teacher)) -> dict[str, Any]:
+    """List only sessions owned by this teacher, optionally narrowed to one owned class."""
     with db() as con:
-        rows = con.execute(
-            "SELECT id, lesson_id, persona, transcript, created_at FROM sessions "
-            "WHERE teacher_id=? ORDER BY created_at DESC LIMIT ?", (teacher["id"], limit)
-        ).fetchall()
+        if class_id and not con.execute("SELECT 1 FROM classes WHERE id=? AND teacher_id=?", (class_id, teacher["id"])).fetchone():
+            raise HTTPException(404, "Class not found")
+        if class_id:
+            rows = con.execute(
+                "SELECT s.id, s.lesson_id, s.persona, s.transcript, s.created_at, s.class_id, c.name AS class_name FROM sessions s LEFT JOIN classes c ON c.id=s.class_id WHERE s.teacher_id=? AND s.class_id=? ORDER BY s.created_at DESC LIMIT ?", (teacher["id"], class_id, limit)
+            ).fetchall()
+        else:
+            rows = con.execute(
+                "SELECT s.id, s.lesson_id, s.persona, s.transcript, s.created_at, s.class_id, c.name AS class_name FROM sessions s LEFT JOIN classes c ON c.id=s.class_id WHERE s.teacher_id=? ORDER BY s.created_at DESC LIMIT ?", (teacher["id"], limit)
+            ).fetchall()
     items = []
     for row in rows:
         transcript = json.loads(row["transcript"])
@@ -283,6 +289,8 @@ def teacher_sessions(limit: int = Query(default=30, ge=1, le=100), teacher: dict
             "lesson": lesson["title_ar"],
             "persona": row["persona"],
             "created_at": row["created_at"],
+            "class_id": row["class_id"],
+            "class_name": row["class_name"],
             "student_turns": sum(1 for message in transcript if message.get("role") == "student"),
             "coverage_signal": report["coverage_signal"],
             "label": report["label"],
@@ -291,22 +299,26 @@ def teacher_sessions(limit: int = Query(default=30, ge=1, le=100), teacher: dict
 
 
 @app.get("/api/teacher/insights")
-def teacher_insights(lesson_id: str | None = Query(default=None), teacher: dict[str,Any] = Depends(current_teacher)) -> dict[str, Any]:
+def teacher_insights(lesson_id: str | None = Query(default=None), class_id: str | None = Query(default=None), teacher: dict[str,Any] = Depends(current_teacher)) -> dict[str, Any]:
     """Aggregate cautious, session-level evidence signals for teacher review."""
     if lesson_id and not get_lesson(lesson_id):
         raise HTTPException(404, "Lesson not found")
 
     with db() as con:
+        if class_id and not con.execute("SELECT 1 FROM classes WHERE id=? AND teacher_id=?", (class_id, teacher["id"])).fetchone():
+            raise HTTPException(404, "Class not found")
+        filters = ["teacher_id=?"]
+        params: list[Any] = [teacher["id"]]
+        if class_id:
+            filters.append("class_id=?")
+            params.append(class_id)
         if lesson_id:
-            rows = con.execute(
-                "SELECT lesson_id, transcript, state_json FROM sessions WHERE lesson_id=? AND teacher_id=?",
-                (lesson_id, teacher["id"]),
-            ).fetchall()
-        else:
-            rows = con.execute(
-                "SELECT lesson_id, transcript, state_json FROM sessions WHERE teacher_id=?",
-                (teacher["id"],)
-            ).fetchall()
+            filters.append("lesson_id=?")
+            params.append(lesson_id)
+        rows = con.execute(
+            "SELECT lesson_id, transcript, state_json FROM sessions WHERE " + " AND ".join(filters),
+            tuple(params),
+        ).fetchall()
 
     grouped: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
@@ -362,6 +374,7 @@ def teacher_insights(lesson_id: str | None = Query(default=None), teacher: dict[
     summaries.sort(key=lambda item: item["lesson"])
     return {
         "lesson_filter": lesson_id,
+        "class_filter": class_id,
         "total_sessions": sum(item["session_count"] for item in summaries),
         "lessons": summaries,
         "notice": "Prototype aggregate based on local sessions only. Small samples, spelling, dialect, and keyword matching can distort signals; teacher review is required.",
@@ -428,9 +441,9 @@ def intervention_feedback_summary(lesson_id: str = Query(...), concept_id: str =
 
 
 @app.get("/api/teacher/priorities")
-def teacher_priorities(lesson_id: str | None = Query(default=None), teacher: dict[str,Any] = Depends(current_teacher)) -> dict[str, Any]:
-    """Return cautious teacher review priorities from this teacher account only."""
-    insights = teacher_insights(lesson_id=lesson_id, teacher=teacher)
+def teacher_priorities(lesson_id: str | None = Query(default=None), class_id: str | None = Query(default=None), teacher: dict[str,Any] = Depends(current_teacher)) -> dict[str, Any]:
+    """Return cautious review priorities within this teacher's account and optional class."""
+    insights = teacher_insights(lesson_id=lesson_id, class_id=class_id, teacher=teacher)
     return build_review_priorities(insights)
 
 
