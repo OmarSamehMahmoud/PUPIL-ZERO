@@ -1,0 +1,22 @@
+{
+  "dataset_name": "PUPIL ZERO Egyptian curriculum source registry",
+  "last_checked": "2026-11-16",
+  "official_portal": "https://studentbooks.moe.gov.eg/",
+  "notes": [
+    "The official portal is the authoritative place to discover current school textbook editions.",
+    "The portal blocked automated retrieval during initial project setup; the exact 2026/2027 mathematics lesson sequence has not yet been extracted or verified.",
+    "Current sample lesson prompts are original educational examples, not copied Ministry textbook passages.",
+    "The Ministry states that intellectual property rights in its developed curricula belong to the Egyptian state represented by the Ministry. Do not redistribute textbook material without permission."
+  ],
+  "records": [
+    {
+      "grade": "Preparatory 1",
+      "subject": "Mathematics",
+      "academic_year": "2026/2027",
+      "term": "TBD",
+      "unit": "Fractions",
+      "verification_status": "topic alignment not yet verified against current official textbook",
+      "source_url": "https://studentbooks.moe.gov.eg/"
+    }
+  ]
+}
