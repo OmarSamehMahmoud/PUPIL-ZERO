@@ -97,6 +97,83 @@ def teacher_sessions(limit: int = Query(default=30, ge=1, le=100)) -> dict[str, 
     return {"sessions": items, "count": len(items), "notice": "Prototype dashboard: no login or role-based access yet. Keep the server on localhost."}
 
 
+@app.get("/api/teacher/insights")
+def teacher_insights(lesson_id: str | None = Query(default=None)) -> dict[str, Any]:
+    """Aggregate cautious, session-level evidence signals for teacher review."""
+    if lesson_id and not get_lesson(lesson_id):
+        raise HTTPException(404, "Lesson not found")
+
+    with db() as con:
+        if lesson_id:
+            rows = con.execute(
+                "SELECT lesson_id, transcript, state_json FROM sessions WHERE lesson_id=?",
+                (lesson_id,),
+            ).fetchall()
+        else:
+            rows = con.execute(
+                "SELECT lesson_id, transcript, state_json FROM sessions"
+            ).fetchall()
+
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        lesson = get_lesson(row["lesson_id"])
+        if not lesson:
+            continue
+        try:
+            transcript = json.loads(row["transcript"] or "[]")
+            state = json.loads(row["state_json"] or "{}")
+        except (TypeError, json.JSONDecodeError):
+            continue
+        grouped.setdefault(row["lesson_id"], []).append({
+            "lesson": lesson,
+            "transcript": transcript if isinstance(transcript, list) else [],
+            "state": state if isinstance(state, dict) else {},
+        })
+
+    summaries = []
+    for current_id, records in grouped.items():
+        lesson = records[0]["lesson"]
+        concept_rows = []
+        for concept in lesson.get("concepts", []):
+            evidence_sessions = 0
+            review_sessions = 0
+            for record in records:
+                report = assess_explanation(record["transcript"], lesson)
+                if any(
+                    item["concept_id"] == concept["id"] and item["status"] == "evidence_found"
+                    for item in report["concepts"]
+                ):
+                    evidence_sessions += 1
+                if concept["id"] in record["state"].get("review_targets", []):
+                    review_sessions += 1
+            concept_rows.append({
+                "concept_id": concept["id"],
+                "concept": concept["label_ar"],
+                "sessions_with_keyword_evidence": evidence_sessions,
+                "sessions_flagged_for_review": review_sessions,
+                "review_signal": review_sessions > 0,
+            })
+        summaries.append({
+            "lesson_id": current_id,
+            "lesson": lesson["title_ar"],
+            "session_count": len(records),
+            "student_response_sessions": sum(
+                any(m.get("role") == "student" for m in record["transcript"])
+                for record in records
+            ),
+            "concepts": concept_rows,
+            "notice": "Counts describe keyword matches and dialogue review flags, not class mastery or student grades.",
+        })
+
+    summaries.sort(key=lambda item: item["lesson"])
+    return {
+        "lesson_filter": lesson_id,
+        "total_sessions": sum(item["session_count"] for item in summaries),
+        "lessons": summaries,
+        "notice": "Prototype aggregate based on local sessions only. Small samples, spelling, dialect, and keyword matching can distort signals; teacher review is required.",
+    }
+
+
 @app.get("/api/teacher/sessions/{session_id}")
 def teacher_session_detail(session_id: str) -> dict[str, Any]:
     with db() as con:
