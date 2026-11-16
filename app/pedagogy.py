@@ -5,6 +5,7 @@ This is a transparent dialogue scaffold, not a validated mastery classifier.
 from __future__ import annotations
 from typing import Any
 from app.assessment import normalize
+from app.adaptive import choose_start_scenario
 
 STAGES = {
     "elicit": "اطلب من الطالب شرح فكرته بكلماته. لا تكشف الإجابة.",
@@ -13,9 +14,21 @@ STAGES = {
     "reflect": "اطلب تلخيص الفكرة وما الذي أصبح أوضح.",
 }
 
-def initial_state(lesson: dict[str, Any]) -> dict[str, Any]:
-    return {"stage":"elicit","scenario_index":0,"attempts_on_scenario":0,
-            "evidence_terms":[],"review_targets":[],"turns":0}
+
+def initial_state(
+    lesson: dict[str, Any], review_targets: list[str] | None = None
+) -> dict[str, Any]:
+    index, priority_target = choose_start_scenario(lesson, review_targets)
+    return {
+        "stage": "elicit",
+        "scenario_index": index,
+        "attempts_on_scenario": 0,
+        "evidence_terms": [],
+        "review_targets": [],
+        "turns": 0,
+        "adaptation_target": priority_target,
+    }
+
 
 def advance_state(state: dict[str, Any], student_text: str, lesson: dict[str, Any]) -> dict[str, Any]:
     current = dict(state or initial_state(lesson))
@@ -50,6 +63,7 @@ def advance_state(state: dict[str, Any], student_text: str, lesson: dict[str, An
         current["stage"] = "clarify"
     return current
 
+
 def state_context(state: dict[str, Any], lesson: dict[str, Any]) -> str:
     scenarios = lesson.get("scenarios", [])
     index = int(state.get("scenario_index",0))
@@ -59,6 +73,10 @@ def state_context(state: dict[str, Any], lesson: dict[str, Any]) -> str:
     target = scenario.get("target","")
     concept = next((item for item in lesson.get("concepts",[]) if item.get("id")==target),{})
     stage = state.get("stage","elicit")
+    adaptation = ""
+    if state.get("adaptation_target"):
+        adaptation = "هذا السيناريو اختير للتركيز على هدف مراجعة سابق؛ تعامل معه بلطف ولا تفترض وجود خطأ.\n"
     return (f"مرحلة الحوار: {stage}. {STAGES.get(stage,STAGES['elicit'])}\n"
+            f"{adaptation}"
             f"المفهوم: {concept.get('label_ar',target)}. التصور البديل للاستكشاف: {concept.get('misconception','غير محدد')}.\n"
             "اسأل سؤالًا واحدًا فقط. لا تقل للطالب إن النظام اكتشف خطأه. مطابقة الكلمات ليست دليل إتقان.")
