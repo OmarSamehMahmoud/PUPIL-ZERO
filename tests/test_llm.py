@@ -29,3 +29,8 @@ def test_history_is_limited_to_recent_turns():
     messages = _history_messages(transcript, "system")
     assert len(messages) == 15
     assert messages[1]["content"] == "6"
+
+
+def test_system_prompt_uses_selected_persona_name():
+    assert "أنت NOURA" in build_system_prompt(get_lesson("fractions"), "noura")
+    assert "أنت ZIZO" in build_system_prompt(get_lesson("fractions"), "zizo")
