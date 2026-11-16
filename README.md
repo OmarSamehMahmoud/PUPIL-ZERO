@@ -1,6 +1,6 @@
 # PUPIL ZERO
 
-**Prototype version: 1.8.0**
+**Prototype version: 1.9.0**
 
 **Teach an AI. Discover what you really know.**
 
@@ -18,11 +18,13 @@ PUPIL ZERO is an Arabic-first, learning-by-teaching prototype. A learner explain
 - Student progress endpoint summarizing their own sessions, lessons visited, and longitudinal concept keyword signals; optional class filter is restricted to their memberships.
 - Teacher class progress dashboard with per-student session counts, lessons visited, and evidence-signal summaries; individual progress is available only when the student belongs to a class owned by that teacher.
 - Parent accounts can only be created from a teacher-issued, single-use guardian invitation tied to a specific student and class; invitations expire after seven days.
+- Daily learning experience: students have a protected `/student` hub with their linked school timetable, assignment inbox, attendance history, and in-app notifications. Teachers can view their linked-school teaching timetable and mark attendance only for classes assigned to them. Parents can view attendance, timetable, and notifications only through an explicitly linked student/class. New assignments notify enrolled students; attendance updates notify the student and linked parent accounts. Notifications are local in-app records; no email, push, or background due-date reminders are sent.
 - School learning operations: school administrators can define a weekly timetable for existing class/subject/teacher assignments (overlapping periods for the same class or teacher are rejected), record per-student attendance by date, log lesson delivery as completed/cancelled/missed, and generate date-range operational summaries. Records are scoped to the current school; attendance and lesson logs are not learning or mastery measures.
 - School academic management: school administrators can define departments, grade levels, and subjects, attach a grade level to a school class, and assign a linked teacher to teach a subject in a class. These are school-scoped administrative records and do not transfer class ownership or imply student mastery.
 - School workspaces: a school administrator can create a school account, invite a teacher by email with a single-use seven-day registration token, link an existing teacher account, and view school-scoped teacher/class/enrollment counts. Existing classes are included when an existing teacher is linked; future classes created by an invited/linked teacher are automatically included. Admins can unlink a teacher from the school without deleting the teacher account or their classes.
 - Parent portal is restricted to the linked student/class pair and shows aggregate activity, lesson IDs, assignment submission status, and a downloadable PDF report. It does not expose chat transcripts.
 - Arabic account portal at `/account`.
+- Student daily hub at `/student` (student login required).
 - Arabic RTL student experience, responsive layout, text chat, and optional browser speech input/output.
 - Three selectable classmates: MILO, NOURA, and ZIZO. Each has a distinct prompt profile.
 - Cross-session adaptive scenario selection: a new session can start with an authored scenario matching a concept flagged for review in the learner's previous sessions. The routing reason is returned by the session API; no difficulty or mastery claim is made.
@@ -115,6 +117,12 @@ Tests are committed and a GitHub Actions workflow runs them on pushes and pull r
 - `POST /api/teacher/assignments` — publish an assignment to one class owned by the signed-in teacher. JSON: `{"class_id":"...","title":"Explain fractions","description":"Use an example","lesson_id":"fractions","due_at":"2026-11-20T18:00"}`.
 - `GET /api/teacher/assignments` — list owned assignments and each class member’s submitted/pending status; optional owned `class_id` filter.
 - `GET /api/student/assignments` — list assignments for the signed-in student’s enrolled classes; optional `class_id` filter.
+- `GET /api/student/dashboard` — linked-school timetable, assignment inbox, attendance history, and recent notifications.
+- `GET /api/teacher/operations` — teaching timetable and linked-school class assignments for the signed-in teacher.
+- `POST /api/teacher/attendance` — mark attendance for a student in a class assigned to the signed-in teacher in a linked school.
+- `GET /api/student/notifications` / `GET /api/teacher/notifications` — role-scoped in-app notification inboxes.
+- `POST /api/notifications/{notification_id}/read` — mark one own notification as read.
+- `GET /api/parent/students/{student_id}/school-summary?class_id=...` — attendance, timetable, and notifications for an explicitly linked student/class.
 - `GET /api/student/progress` — the signed-in student's own learning progress; optional enrolled `class_id` filter.
 - `GET /api/teacher/classes/{class_id}/progress` — roster-level progress summary for a class owned by the signed-in teacher.
 - `GET /api/teacher/students/{student_id}/progress?class_id=...` — individual progress, only for a student enrolled in the specified class owned by the teacher.
