@@ -14,18 +14,20 @@ from pydantic import BaseModel, Field
 from app.assessment import assess_explanation
 from app.curriculum import get_lesson
 from app.llm import generate_reply, public_status
+from app.learning_journey import build_learning_journey
 from app.pedagogy import advance_state, initial_state, state_context
 from app.teacher_intelligence import build_review_priorities
 
 ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = ROOT / "pupil_zero.db"
-app = FastAPI(title="PUPIL ZERO", version="0.5.0", description="Local-first learning-by-teaching MVP")
+app = FastAPI(title="PUPIL ZERO", version="0.6.0", description="Local-first learning-by-teaching MVP")
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
 
 class StartRequest(BaseModel):
     lesson_id: str = "fractions"
     persona: str = "milo"
+    learner_id: str | None = Field(default=None, min_length=36, max_length=36)
 
 
 class MessageRequest(BaseModel):
@@ -48,11 +50,13 @@ def init_db() -> None:
         con.execute("""CREATE TABLE IF NOT EXISTS sessions (
             id TEXT PRIMARY KEY, lesson_id TEXT NOT NULL, persona TEXT NOT NULL,
             transcript TEXT NOT NULL DEFAULT '[]', created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-            state_json TEXT NOT NULL DEFAULT '{}'
+            state_json TEXT NOT NULL DEFAULT '{}', learner_id TEXT
         )""")
         columns = {row["name"] for row in con.execute("PRAGMA table_info(sessions)")}
         if "state_json" not in columns:
             con.execute("ALTER TABLE sessions ADD COLUMN state_json TEXT NOT NULL DEFAULT '{}'")
+        if "learner_id" not in columns:
+            con.execute("ALTER TABLE sessions ADD COLUMN learner_id TEXT")
 
 
 @app.on_event("startup")
@@ -182,6 +186,35 @@ def teacher_priorities(lesson_id: str | None = Query(default=None)) -> dict[str,
     return build_review_priorities(insights)
 
 
+@app.get("/api/learner/journey/{learner_id}")
+def learner_journey(learner_id: str) -> dict[str, Any]:
+    """Return an anonymous learner's chronological evidence history."""
+    try:
+        learner_id = str(uuid.UUID(learner_id))
+    except ValueError as exc:
+        raise HTTPException(422, "learner_id must be a UUID") from exc
+    with db() as con:
+        rows = con.execute(
+            "SELECT id, lesson_id, transcript, created_at FROM sessions "
+            "WHERE learner_id=? ORDER BY created_at ASC, id ASC", (learner_id,)
+        ).fetchall()
+    records = []
+    for row in rows:
+        lesson = get_lesson(row["lesson_id"])
+        if not lesson:
+            continue
+        try:
+            transcript = json.loads(row["transcript"] or "[]")
+        except (TypeError, json.JSONDecodeError):
+            transcript = []
+        records.append({
+            "session_id": row["id"], "lesson_id": row["lesson_id"],
+            "lesson": lesson["title_ar"], "created_at": row["created_at"],
+            "report": assess_explanation(transcript, lesson),
+        })
+    return {"learner_id": learner_id, **build_learning_journey(records)}
+
+
 @app.get("/api/teacher/sessions/{session_id}")
 def teacher_session_detail(session_id: str) -> dict[str, Any]:
     with db() as con:
@@ -220,18 +253,24 @@ def start_session(payload: StartRequest) -> dict[str, Any]:
     if payload.persona not in {"milo", "noura", "zizo"}:
         raise HTTPException(422, "Unknown classmate persona")
     session_id = str(uuid.uuid4())
+    learner_id = payload.learner_id or str(uuid.uuid4())
+    try:
+        learner_id = str(uuid.UUID(learner_id))
+    except ValueError as exc:
+        raise HTTPException(422, "learner_id must be a UUID") from exc
     opening = lesson["scenarios"][0]["prompt_ar"]
     transcript = [{"role": "ai", "text": opening}]
     dialogue_state = initial_state(lesson)
     with db() as con:
         con.execute(
-            "INSERT INTO sessions(id, lesson_id, persona, transcript, state_json) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO sessions(id, lesson_id, persona, transcript, state_json, learner_id) VALUES (?, ?, ?, ?, ?, ?)",
             (session_id, payload.lesson_id, payload.persona,
              json.dumps(transcript, ensure_ascii=False),
-             json.dumps(dialogue_state, ensure_ascii=False)),
+             json.dumps(dialogue_state, ensure_ascii=False), learner_id),
         )
     return {
         "session_id": session_id,
+        "learner_id": learner_id,
         "persona": payload.persona,
         "lesson": lesson["title_ar"],
         "reply": opening,
