@@ -19,7 +19,7 @@ PUPIL ZERO is an Arabic-first, learning-by-teaching experience for Egyptian scho
 2. Download a model supported by your machine. Example:
 
    ```bash
-   ollama pull qwen3.5:4b
+   ollama pull qwen3.5:4b-q4_K_M
    ```
 
    Use a model already available in your Ollama library if you prefer.
@@ -46,7 +46,7 @@ PUPIL ZERO is an Arabic-first, learning-by-teaching experience for Egyptian scho
    ```dotenv
    PUPIL_LLM_PROVIDER=ollama
    PUPIL_LLM_BASE_URL=http://127.0.0.1:11434
-   PUPIL_LLM_MODEL=qwen3.5:4b
+   PUPIL_LLM_MODEL=qwen3.5:4b-q4_K_M
    ```
 6. Start the app:
 
@@ -54,7 +54,7 @@ PUPIL ZERO is an Arabic-first, learning-by-teaching experience for Egyptian scho
    uvicorn app.main:app --reload
    ```
 
-7. Open http://127.0.0.1:8000. The header should show **ذكاء اصطناعي محلي متصل** when the provider and model are configured.
+7. Open http://127.0.0.1:8000. The header should show **إعداد الذكاء الاصطناعي المحلي** when the provider and model are configured.
 
 If you do not configure a model, PUPIL ZERO runs in clearly labelled demo fallback mode. If a configured model is unreachable, the chat reports an error instead of silently pretending that a canned response came from AI.
 
