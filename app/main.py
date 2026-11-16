@@ -27,7 +27,7 @@ from app.teacher_intelligence import build_review_priorities
 
 ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = ROOT / "pupil_zero.db"
-app = FastAPI(title="PUPIL ZERO", version="1.6.0", description="Local-first learning-by-teaching MVP")
+app = FastAPI(title="PUPIL ZERO", version="1.7.0", description="Local-first learning-by-teaching MVP")
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
 
@@ -91,6 +91,22 @@ class SchoolTeacherLinkRequest(BaseModel):
 
 class SchoolTeacherInviteRequest(BaseModel):
     email: str = Field(min_length=5, max_length=254)
+
+class SchoolNameRequest(BaseModel):
+    name: str = Field(min_length=2, max_length=100)
+
+class SchoolSubjectRequest(BaseModel):
+    name: str = Field(min_length=2, max_length=100)
+    department_id: str | None = None
+
+class SchoolClassGradeRequest(BaseModel):
+    class_id: str = Field(min_length=1, max_length=64)
+    grade_level_id: str = Field(min_length=1, max_length=64)
+
+class SchoolTeachingAssignmentRequest(BaseModel):
+    class_id: str = Field(min_length=1, max_length=64)
+    subject_id: str = Field(min_length=1, max_length=64)
+    teacher_id: str = Field(min_length=1, max_length=64)
 
 class InvitedTeacherRegisterRequest(BaseModel):
     invite_token: str = Field(min_length=30, max_length=200)
@@ -191,6 +207,38 @@ def init_db() -> None:
             school_id TEXT NOT NULL REFERENCES schools(id),
             class_id TEXT NOT NULL REFERENCES classes(id),
             PRIMARY KEY(school_id, class_id)
+        )""")
+        con.execute("""CREATE TABLE IF NOT EXISTS school_departments (
+            id TEXT PRIMARY KEY, school_id TEXT NOT NULL REFERENCES schools(id),
+            name TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(school_id, name)
+        )""")
+        con.execute("""CREATE TABLE IF NOT EXISTS school_grade_levels (
+            id TEXT PRIMARY KEY, school_id TEXT NOT NULL REFERENCES schools(id),
+            name TEXT NOT NULL, sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(school_id, name)
+        )""")
+        con.execute("""CREATE TABLE IF NOT EXISTS school_subjects (
+            id TEXT PRIMARY KEY, school_id TEXT NOT NULL REFERENCES schools(id),
+            department_id TEXT REFERENCES school_departments(id),
+            name TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(school_id, name)
+        )""")
+        con.execute("""CREATE TABLE IF NOT EXISTS school_class_grades (
+            school_id TEXT NOT NULL REFERENCES schools(id),
+            class_id TEXT NOT NULL REFERENCES classes(id),
+            grade_level_id TEXT NOT NULL REFERENCES school_grade_levels(id),
+            assigned_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY(school_id, class_id)
+        )""")
+        con.execute("""CREATE TABLE IF NOT EXISTS school_teaching_assignments (
+            id TEXT PRIMARY KEY, school_id TEXT NOT NULL REFERENCES schools(id),
+            class_id TEXT NOT NULL REFERENCES classes(id),
+            subject_id TEXT NOT NULL REFERENCES school_subjects(id),
+            teacher_id TEXT NOT NULL REFERENCES users(id),
+            assigned_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(school_id, class_id, subject_id)
         )""")
         con.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_school_teachers_single_school ON school_teachers(teacher_id)")
         con.execute("""CREATE TABLE IF NOT EXISTS school_teacher_invites (
@@ -531,14 +579,115 @@ def school_admin_overview(admin: dict[str, Any] = Depends(current_school_admin))
             LEFT JOIN classes c ON c.id=sc.class_id AND c.teacher_id=u.id
             WHERE st.school_id=? GROUP BY u.id ORDER BY u.display_name""", (school["id"],)).fetchall()
         classes = con.execute("""SELECT c.id,c.name,c.grade_label,u.display_name AS teacher_name,
-            COUNT(DISTINCT m.student_id) AS student_count
+            COUNT(DISTINCT m.student_id) AS student_count, gl.name AS academic_grade
             FROM school_classes sc JOIN classes c ON c.id=sc.class_id
             JOIN users u ON u.id=c.teacher_id LEFT JOIN class_members m ON m.class_id=c.id
+            LEFT JOIN school_class_grades cg ON cg.school_id=sc.school_id AND cg.class_id=c.id
+            LEFT JOIN school_grade_levels gl ON gl.id=cg.grade_level_id
             WHERE sc.school_id=? GROUP BY c.id ORDER BY c.created_at DESC""", (school["id"],)).fetchall()
+        departments = con.execute("SELECT id,name FROM school_departments WHERE school_id=? ORDER BY name", (school["id"],)).fetchall()
+        grade_levels = con.execute("SELECT id,name,sort_order FROM school_grade_levels WHERE school_id=? ORDER BY sort_order,name", (school["id"],)).fetchall()
+        subjects = con.execute("""SELECT s.id,s.name,s.department_id,d.name AS department_name
+            FROM school_subjects s LEFT JOIN school_departments d ON d.id=s.department_id
+            WHERE s.school_id=? ORDER BY s.name""", (school["id"],)).fetchall()
+        teaching_assignments = con.execute("""SELECT a.id,a.class_id,a.subject_id,a.teacher_id,
+            c.name AS class_name,s.name AS subject_name,u.display_name AS teacher_name
+            FROM school_teaching_assignments a JOIN classes c ON c.id=a.class_id
+            JOIN school_subjects s ON s.id=a.subject_id JOIN users u ON u.id=a.teacher_id
+            WHERE a.school_id=? ORDER BY c.name,s.name""", (school["id"],)).fetchall()
     return {"school": dict(school), "teacher_count": len(teachers), "class_count": len(classes),
             "student_enrollments": sum(row["student_count"] for row in classes),
             "teachers": [dict(row) for row in teachers], "classes": [dict(row) for row in classes],
-            "notice": "Operational counts only; these are not grades or mastery scores."}
+            "departments": [dict(row) for row in departments], "grade_levels": [dict(row) for row in grade_levels],
+            "subjects": [dict(row) for row in subjects], "teaching_assignments": [dict(row) for row in teaching_assignments],
+            "notice": "Operational counts only; academic assignments are administrative records, not evidence of student mastery."}
+
+
+@app.post("/api/school-admin/departments", status_code=201)
+def school_admin_create_department(payload: SchoolNameRequest, admin: dict[str, Any] = Depends(current_school_admin)) -> dict[str, Any]:
+    department_id = str(uuid.uuid4())
+    with db() as con:
+        school = con.execute("SELECT school_id FROM school_admin_accounts WHERE id=?", (admin["id"],)).fetchone()
+        try:
+            con.execute("INSERT INTO school_departments(id,school_id,name) VALUES(?,?,?)",
+                        (department_id, school["school_id"], payload.name.strip()))
+        except sqlite3.IntegrityError as exc:
+            raise HTTPException(409, "A department with this name already exists") from exc
+    return {"id": department_id, "name": payload.name.strip()}
+
+
+@app.post("/api/school-admin/grade-levels", status_code=201)
+def school_admin_create_grade_level(payload: SchoolNameRequest, sort_order: int = Query(0, ge=0, le=1000),
+                                    admin: dict[str, Any] = Depends(current_school_admin)) -> dict[str, Any]:
+    grade_id = str(uuid.uuid4())
+    with db() as con:
+        school = con.execute("SELECT school_id FROM school_admin_accounts WHERE id=?", (admin["id"],)).fetchone()
+        try:
+            con.execute("INSERT INTO school_grade_levels(id,school_id,name,sort_order) VALUES(?,?,?,?)",
+                        (grade_id, school["school_id"], payload.name.strip(), sort_order))
+        except sqlite3.IntegrityError as exc:
+            raise HTTPException(409, "A grade level with this name already exists") from exc
+    return {"id": grade_id, "name": payload.name.strip(), "sort_order": sort_order}
+
+
+@app.post("/api/school-admin/subjects", status_code=201)
+def school_admin_create_subject(payload: SchoolSubjectRequest, admin: dict[str, Any] = Depends(current_school_admin)) -> dict[str, Any]:
+    subject_id = str(uuid.uuid4())
+    with db() as con:
+        school = con.execute("SELECT school_id FROM school_admin_accounts WHERE id=?", (admin["id"],)).fetchone()
+        if payload.department_id and not con.execute(
+            "SELECT 1 FROM school_departments WHERE id=? AND school_id=?",
+            (payload.department_id, school["school_id"])
+        ).fetchone():
+            raise HTTPException(404, "Department not found in this school")
+        try:
+            con.execute("INSERT INTO school_subjects(id,school_id,department_id,name) VALUES(?,?,?,?)",
+                        (subject_id, school["school_id"], payload.department_id, payload.name.strip()))
+        except sqlite3.IntegrityError as exc:
+            raise HTTPException(409, "A subject with this name already exists") from exc
+    return {"id": subject_id, "name": payload.name.strip(), "department_id": payload.department_id}
+
+
+@app.post("/api/school-admin/class-grades", status_code=201)
+def school_admin_assign_class_grade(payload: SchoolClassGradeRequest,
+                                    admin: dict[str, Any] = Depends(current_school_admin)) -> dict[str, Any]:
+    with db() as con:
+        school = con.execute("SELECT school_id FROM school_admin_accounts WHERE id=?", (admin["id"],)).fetchone()
+        if not con.execute("SELECT 1 FROM school_classes WHERE school_id=? AND class_id=?",
+                           (school["school_id"], payload.class_id)).fetchone():
+            raise HTTPException(404, "Class not found in this school")
+        if not con.execute("SELECT 1 FROM school_grade_levels WHERE school_id=? AND id=?",
+                           (school["school_id"], payload.grade_level_id)).fetchone():
+            raise HTTPException(404, "Grade level not found in this school")
+        con.execute("""INSERT INTO school_class_grades(school_id,class_id,grade_level_id) VALUES(?,?,?)
+            ON CONFLICT(school_id,class_id) DO UPDATE SET grade_level_id=excluded.grade_level_id,assigned_at=CURRENT_TIMESTAMP""",
+                    (school["school_id"], payload.class_id, payload.grade_level_id))
+    return {"assigned": True, "class_id": payload.class_id, "grade_level_id": payload.grade_level_id}
+
+
+@app.post("/api/school-admin/teaching-assignments", status_code=201)
+def school_admin_assign_subject_teacher(payload: SchoolTeachingAssignmentRequest,
+                                        admin: dict[str, Any] = Depends(current_school_admin)) -> dict[str, Any]:
+    assignment_id = str(uuid.uuid4())
+    with db() as con:
+        school = con.execute("SELECT school_id FROM school_admin_accounts WHERE id=?", (admin["id"],)).fetchone()
+        sid = school["school_id"]
+        if not con.execute("SELECT 1 FROM school_classes WHERE school_id=? AND class_id=?", (sid, payload.class_id)).fetchone():
+            raise HTTPException(404, "Class not found in this school")
+        if not con.execute("SELECT 1 FROM school_subjects WHERE school_id=? AND id=?", (sid, payload.subject_id)).fetchone():
+            raise HTTPException(404, "Subject not found in this school")
+        if not con.execute("SELECT 1 FROM school_teachers WHERE school_id=? AND teacher_id=?", (sid, payload.teacher_id)).fetchone():
+            raise HTTPException(404, "Teacher is not linked to this school")
+        con.execute("""INSERT INTO school_teaching_assignments(id,school_id,class_id,subject_id,teacher_id)
+            VALUES(?,?,?,?,?) ON CONFLICT(school_id,class_id,subject_id) DO UPDATE SET
+            teacher_id=excluded.teacher_id,assigned_at=CURRENT_TIMESTAMP""",
+                    (assignment_id, sid, payload.class_id, payload.subject_id, payload.teacher_id))
+        row = con.execute("""SELECT a.id,c.name AS class_name,s.name AS subject_name,u.display_name AS teacher_name
+            FROM school_teaching_assignments a JOIN classes c ON c.id=a.class_id
+            JOIN school_subjects s ON s.id=a.subject_id JOIN users u ON u.id=a.teacher_id
+            WHERE a.school_id=? AND a.class_id=? AND a.subject_id=?""",
+                          (sid, payload.class_id, payload.subject_id)).fetchone()
+    return {"assignment": dict(row)}
 
 
 @app.post("/api/teacher/students/{student_id}/guardian-invite", status_code=201)
