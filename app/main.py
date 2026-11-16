@@ -183,6 +183,7 @@ def init_db() -> None:
             class_id TEXT NOT NULL REFERENCES classes(id),
             PRIMARY KEY(school_id, class_id)
         )""")
+        con.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_school_teachers_single_school ON school_teachers(teacher_id)")
         con.execute("""CREATE TABLE IF NOT EXISTS guardian_invites (
             token_hash TEXT PRIMARY KEY, student_id TEXT NOT NULL, class_id TEXT NOT NULL,
             teacher_id TEXT NOT NULL, expires_at INTEGER NOT NULL, used_at TEXT,
