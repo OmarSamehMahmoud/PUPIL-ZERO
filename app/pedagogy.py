@@ -23,6 +23,9 @@ def advance_state(state: dict[str, Any], student_text: str, lesson: dict[str, An
     if not scenarios:
         current["stage"] = "reflect"
         return current
+    if current.get("stage") == "reflect":
+        current["turns"] = int(current.get("turns", 0)) + 1
+        return current
     index = min(int(current.get("scenario_index", 0)), len(scenarios)-1)
     scenario = scenarios[index]
     normalized = normalize(student_text)
