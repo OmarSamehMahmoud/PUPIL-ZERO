@@ -47,4 +47,12 @@ def test_student_and_teacher_flow_uses_local_database(tmp_path, monkeypatch):
         unknown = client.get("/api/teacher/insights?lesson_id=unknown")
         assert unknown.status_code == 404
 
+        priorities = client.get("/api/teacher/priorities")
+        assert priorities.status_code == 200
+        assert priorities.json()["priorities"] == []
+        assert "ليست تشخيصًا" in priorities.json()["notice"]
+
+        unknown_priorities = client.get("/api/teacher/priorities?lesson_id=unknown")
+        assert unknown_priorities.status_code == 404
+
         assert client.get("/teacher").status_code == 200
