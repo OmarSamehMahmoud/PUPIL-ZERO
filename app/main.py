@@ -735,7 +735,7 @@ def finish_session(payload: FinishRequest, request: Request) -> dict[str, Any]:
         raise HTTPException(404, "Session not found")
     transcript = json.loads(row["transcript"])
     lesson = get_lesson(row["lesson_id"])
-    if row["student_id"] and row["assignment_id"]:
+    if row["student_id"] and row["assignment_id"] and any(item.get("role") == "student" for item in transcript):
         with db() as con:
             con.execute("INSERT OR IGNORE INTO assignment_submissions(assignment_id,student_id,session_id) VALUES(?,?,?)",
                         (row["assignment_id"], row["student_id"], row["id"]))
