@@ -557,3 +557,80 @@ def test_school_academic_structure_and_assignment_scope(tmp_path, monkeypatch):
             "teacher_id": overview["teachers"][0]["id"]
         }).status_code == 404
         assert admin.post("/api/school-admin/departments", json={"name": "Mathematics"}).status_code == 409
+
+
+
+def test_school_timetable_attendance_and_lesson_operations_scope(tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "DB_PATH", tmp_path / "school_operations.sqlite3")
+    with TestClient(main.app) as admin, TestClient(main.app) as teacher, TestClient(main.app) as student, TestClient(main.app) as other_admin:
+        assert admin.post("/api/auth/register-school-admin", json={
+            "school_name": "Operations School", "email": "ops-admin@example.test",
+            "password": "SchoolAdmin123!", "display_name": "Ops Admin"
+        }).status_code == 201
+        assert teacher.post("/api/auth/register-teacher", json={
+            "email": "ops-teacher@example.test", "password": "TeacherPass123!", "display_name": "Ops Teacher"
+        }).status_code == 201
+        assert admin.post("/api/school-admin/teachers", json={"teacher_email": "ops-teacher@example.test"}).status_code == 201
+        classroom = teacher.post("/api/classes", json={"name": "Ops Class"})
+        joined = student.post("/api/classes/join", json={
+            "join_code": classroom.json()["join_code"], "display_name": "Ops Learner",
+            "email": "ops-learner@example.test", "password": "StudentPass123!"
+        })
+        assert joined.status_code == 201
+        department = admin.post("/api/school-admin/departments", json={"name": "Science"})
+        subject = admin.post("/api/school-admin/subjects", json={"name": "Biology", "department_id": department.json()["id"]})
+        overview = admin.get("/api/school-admin/overview").json()
+        assignment = admin.post("/api/school-admin/teaching-assignments", json={
+            "class_id": classroom.json()["id"], "subject_id": subject.json()["id"],
+            "teacher_id": overview["teachers"][0]["id"]
+        })
+        assert assignment.status_code == 201
+        assignment_id = assignment.json()["assignment"]["id"]
+
+        slot = admin.post("/api/school-admin/timetable", json={
+            "teaching_assignment_id": assignment_id, "day_of_week": 0,
+            "start_time": "08:00", "end_time": "08:45"
+        })
+        assert slot.status_code == 201
+        assert admin.post("/api/school-admin/timetable", json={
+            "teaching_assignment_id": assignment_id, "day_of_week": 0,
+            "start_time": "08:30", "end_time": "09:00"
+        }).status_code == 409
+        assert admin.post("/api/school-admin/timetable", json={
+            "teaching_assignment_id": assignment_id, "day_of_week": 0,
+            "start_time": "09:00", "end_time": "08:30"
+        }).status_code == 422
+
+        roster = admin.get(f"/api/school-admin/classes/{classroom.json()['id']}/students")
+        student_id = roster.json()["students"][0]["id"]
+        marked = admin.post("/api/school-admin/attendance", json={
+            "class_id": classroom.json()["id"], "student_id": student_id,
+            "attendance_date": "2026-11-17", "status": "present"
+        })
+        assert marked.status_code == 201
+        assert admin.post("/api/school-admin/attendance", json={
+            "class_id": classroom.json()["id"], "student_id": student_id,
+            "attendance_date": "2026-11-17", "status": "late"
+        }).status_code == 201
+        assert admin.post("/api/school-admin/lesson-records", json={
+            "timetable_id": slot.json()["slot"]["id"], "lesson_date": "2026-11-17",
+            "status": "completed", "topic": "Cells", "notes": "Lab activity"
+        }).status_code == 201
+
+        report = admin.get("/api/school-admin/operations-report?date_from=2026-11-01&date_to=2026-11-30")
+        assert report.status_code == 200
+        assert report.json()["attendance"]["late"] == 1
+        assert report.json()["lessons"]["completed"] == 1
+        assert report.json()["daily_attendance"][0]["day"] == "2026-11-17"
+
+        assert student.get("/api/school-admin/operations-report?date_from=2026-11-01&date_to=2026-11-30").status_code == 401
+        assert other_admin.post("/api/auth/register-school-admin", json={
+            "school_name": "Other Ops", "email": "other-ops-admin@example.test",
+            "password": "SchoolAdmin456!", "display_name": "Other Ops Admin"
+        }).status_code == 201
+        assert other_admin.get(f"/api/school-admin/classes/{classroom.json()['id']}/students").status_code == 404
+        assert other_admin.post("/api/school-admin/lesson-records", json={
+            "timetable_id": slot.json()["slot"]["id"], "lesson_date": "2026-11-17",
+            "status": "completed"
+        }).status_code == 404
+        assert other_admin.get("/api/school-admin/operations-report?date_from=2026-11-01&date_to=2026-11-30").json()["attendance"] == {}
