@@ -256,7 +256,7 @@ def test_assignment_lifecycle_and_class_isolation(tmp_path, monkeypatch):
         assert student_task["session_id"] == session_id
         teacher_task = teacher.get("/api/teacher/assignments").json()["assignments"][0]
         assert teacher_task["submitted_count"] == 1
-        assert teacher_task["submissions"][0]["display_name"] == "Student One"
+        assert teacher_task["students"][0]["display_name"] == "Student One"
         duplicate = student.post("/api/sessions", json={
             "lesson_id": "fractions", "persona": "milo", "class_id": classroom.json()["id"],
             "assignment_id": assignment_id
