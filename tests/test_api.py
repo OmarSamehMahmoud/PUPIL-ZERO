@@ -706,3 +706,44 @@ def test_student_adaptive_study_plan_and_single_use_quiz(tmp_path, monkeypatch):
         history=student.get("/api/student/quizzes/history")
         assert history.status_code==200 and len(history.json()["history"])==1
         assert teacher.get(f"/api/student/study-plan/fractions").status_code==401
+
+
+
+def test_quiz_uses_local_ai_generator_when_configured(tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "DB_PATH", tmp_path / "ai_quiz.sqlite3")
+    monkeypatch.setattr(main, "public_status", lambda: {"configured": True, "mode": "live_ai"})
+    async def fake_generate(lesson, count=3):
+        return [{
+            "id": f"ai_test_{i}", "concept_id": lesson["concepts"][i % len(lesson["concepts"])]["id"],
+            "prompt": f"سؤال تجريبي صالح رقم {i + 1}؟",
+            "options": [{"id":"a","text":"اختيار أول"},{"id":"b","text":"اختيار ثان"},{"id":"c","text":"اختيار ثالث"}],
+            "correct_option":"b", "explanation":"هذا تفسير تدريبي واضح للإجابة الصحيحة."
+        } for i in range(count)]
+    monkeypatch.setattr(main, "generate_formative_quiz", fake_generate)
+    with TestClient(main.app) as teacher, TestClient(main.app) as student:
+        assert teacher.post("/api/auth/register-teacher", json={
+            "email":"ai-engine-teacher@example.test","password":"TeacherPass123!","display_name":"Teacher"}).status_code==201
+        classroom=teacher.post("/api/classes",json={"name":"AI Engine Class"})
+        joined=student.post("/api/classes/join",json={"join_code":classroom.json()["join_code"],
+            "display_name":"AI Learner","email":"ai-engine-student@example.test","password":"StudentPass123!"})
+        assert joined.status_code==201
+        response=student.post("/api/student/quizzes",json={"lesson_id":"fractions"})
+        assert response.status_code==201
+        data=response.json()
+        assert data["source"]=="local_ai"
+        assert len(data["questions"])==3
+        assert "correct_option" not in data["questions"][0]
+        assert data["questions"][0]["options"][1]["id"]=="b"
+
+
+def test_invalid_local_ai_question_set_is_rejected(tmp_path, monkeypatch):
+    from app.learning_engine import validate_question_set
+    from app.curriculum import get_lesson
+    invalid=[{"id":"bad","concept_id":"not_a_lesson_concept","prompt":"سؤال غير صالح؟",
+              "options":[{"id":"a","text":"أ"},{"id":"b","text":"ب"},{"id":"c","text":"ج"}],
+              "correct_option":"a","explanation":"تفسير صالح"}]
+    try:
+        validate_question_set(invalid, get_lesson("fractions"))
+        assert False, "Expected invalid generated question to be rejected"
+    except ValueError:
+        pass
