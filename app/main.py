@@ -6,7 +6,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -57,6 +57,57 @@ def startup() -> None:
 @app.get("/", response_class=HTMLResponse)
 def home() -> str:
     return (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+
+
+@app.get("/teacher", response_class=HTMLResponse)
+def teacher_home() -> str:
+    return (ROOT / "static" / "teacher.html").read_text(encoding="utf-8")
+
+
+@app.get("/api/teacher/sessions")
+def teacher_sessions(limit: int = Query(default=30, ge=1, le=100)) -> dict[str, Any]:
+    """Local prototype dashboard; protect the host before exposing beyond localhost."""
+    with db() as con:
+        rows = con.execute(
+            "SELECT id, lesson_id, persona, transcript, created_at FROM sessions "
+            "ORDER BY created_at DESC LIMIT ?", (limit,)
+        ).fetchall()
+    items = []
+    for row in rows:
+        transcript = json.loads(row["transcript"])
+        lesson = get_lesson(row["lesson_id"])
+        if not lesson:
+            continue
+        report = assess_explanation(transcript, lesson)
+        items.append({
+            "session_id": row["id"],
+            "short_id": row["id"][:8],
+            "lesson": lesson["title_ar"],
+            "persona": row["persona"],
+            "created_at": row["created_at"],
+            "student_turns": sum(1 for message in transcript if message.get("role") == "student"),
+            "coverage_signal": report["coverage_signal"],
+            "label": report["label"],
+        })
+    return {"sessions": items, "count": len(items), "notice": "Prototype dashboard: no login or role-based access yet. Keep the server on localhost."}
+
+
+@app.get("/api/teacher/sessions/{session_id}")
+def teacher_session_detail(session_id: str) -> dict[str, Any]:
+    with db() as con:
+        row = con.execute("SELECT * FROM sessions WHERE id=?", (session_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "Session not found")
+    transcript = json.loads(row["transcript"])
+    lesson = get_lesson(row["lesson_id"])
+    return {
+        "session_id": row["id"],
+        "lesson": lesson["title_ar"],
+        "persona": row["persona"],
+        "created_at": row["created_at"],
+        "transcript": transcript,
+        "report": assess_explanation(transcript, lesson),
+    }
 
 
 @app.get("/api/health")
