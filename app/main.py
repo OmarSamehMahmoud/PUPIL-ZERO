@@ -125,16 +125,21 @@ def startup() -> None:
 
 @app.middleware("http")
 async def teacher_auth_guard(request: Request, call_next):
+    token = request.cookies.get("pupil_session", "")
+    user = None
+    if token:
+        with db() as con:
+            user = con.execute(
+                "SELECT u.id,u.email,u.display_name,u.role FROM auth_sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>?",
+                (token_digest(token), int(time.time())),
+            ).fetchone()
+    request.state.user = dict(user) if user else None
     path = request.url.path
     if path == "/teacher" or path.startswith("/api/teacher"):
-        token = request.cookies.get("pupil_session", "")
-        with db() as con:
-            user = con.execute("SELECT u.id,u.email,u.display_name,u.role FROM auth_sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>?", (token_digest(token), int(time.time()))).fetchone() if token else None
         if not user or user["role"] != "teacher":
             if path == "/teacher":
-                return HTMLResponse("<!doctype html><html lang=ar dir=rtl><meta charset=utf-8><body><h1>تسجيل دخول المدرّس مطلوب</h1><a href=/ >العودة</a></body></html>", status_code=401)
-            return JSONResponse({"detail":"Teacher authentication required"}, status_code=401)
-        request.state.user = dict(user)
+                return HTMLResponse("<!doctype html><html lang=ar dir=rtl><meta charset=utf-8><body><h1>تسجيل دخول المدرّس مطلوب</h1><p><a href=/account>افتح صفحة الحسابات لتسجيل الدخول</a></p></body></html>", status_code=401)
+            return JSONResponse({"detail": "Teacher authentication required"}, status_code=401)
     return await call_next(request)
 
 def current_teacher(request: Request) -> dict[str, Any]:
