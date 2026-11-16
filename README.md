@@ -7,7 +7,7 @@ PUPIL ZERO is an Arabic-first, learning-by-teaching experience for Egyptian scho
 ## Current build
 
 - FastAPI + SQLite session storage.
-- Arabic RTL student interface with text chat and optional browser speech input/output.
+- Arabic RTL student interface with text chat and optional browser speech input/output. The interface has no required remote font or CDN dependency.
 - Three character profiles in the local AI prompt (MILO, NOURA, ZIZO); MILO is currently selected by the starter screen.
 - Live model integration through a local Ollama server or an OpenAI-compatible endpoint.
 - Deterministic fallback mode when no model is configured. The interface labels this as a demo; it is not represented as live AI.
@@ -61,6 +61,15 @@ If you do not configure a model, PUPIL ZERO runs in clearly labelled demo fallba
 ## OpenAI-compatible local servers
 
 Set `PUPIL_LLM_PROVIDER=openai-compatible`, `PUPIL_LLM_BASE_URL` to the server base URL (without `/v1/chat/completions`), and `PUPIL_LLM_MODEL` to its model identifier. Set `PUPIL_LLM_API_KEY` only if the server requires one.
+
+## Run automated tests
+
+Install the development test dependency and run the suite:
+
+```bash
+pip install -r requirements-dev.txt
+pytest -q
+```
 
 ## API
 
