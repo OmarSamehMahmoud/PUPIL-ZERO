@@ -9,6 +9,7 @@ PUPIL ZERO is an Arabic-first, learning-by-teaching prototype. A learner explain
 - FastAPI backend and SQLite session history.
 - Arabic RTL student experience, responsive layout, text chat, and optional browser speech input/output.
 - Three selectable classmates: MILO, NOURA, and ZIZO. Each has a distinct prompt profile.
+- Persistent adaptive dialogue state per session: elicit, clarify, transfer, and reflect stages, with misconception review targets. These are conversation-routing signals, not mastery labels.
 - Three original mathematics demonstrator lessons: fractions, decimals, and introductory ratios.
 - Local Ollama integration and OpenAI-compatible chat endpoint support.
 - Explicit demo fallback when no model is configured; if a configured model is unavailable, the app reports an error instead of pretending demo text is live AI.
@@ -79,7 +80,7 @@ pip install -r requirements-dev.txt
 pytest -q
 ```
 
-Tests are committed but have not been executed in the maintainer's environment as part of this update. Run them locally before relying on the build.
+Tests are committed and a GitHub Actions workflow runs them on pushes and pull requests. Check GitHub for the latest workflow result; do not assume it passed until a completed run is visible.
 
 ## API
 
@@ -87,7 +88,7 @@ Tests are committed but have not been executed in the maintainer's environment a
 - `GET /api/lessons` — demonstrator lesson catalog.
 - `POST /api/sessions` — create a session. JSON: `{"lesson_id":"fractions","persona":"milo"}`.
 - `POST /api/message` — send a student explanation. JSON: `{"session_id":"...","text":"..."}`.
-- `POST /api/finish` — return transcript and formative evidence report.
+- `POST /api/finish` — return transcript, formative evidence report, and current dialogue state.
 - `GET /api/teacher/sessions` — recent local sessions.
 - `GET /api/teacher/sessions/{session_id}` — transcript and report for one session.
 
