@@ -112,6 +112,7 @@ def teacher_session_detail(session_id: str) -> dict[str, Any]:
         "created_at": row["created_at"],
         "transcript": transcript,
         "report": assess_explanation(transcript, lesson),
+        "dialogue_state": json.loads(row["state_json"] or "{}"),
     }
 
 
