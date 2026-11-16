@@ -27,7 +27,7 @@ from app.teacher_intelligence import build_review_priorities
 
 ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = ROOT / "pupil_zero.db"
-app = FastAPI(title="PUPIL ZERO", version="1.5.0", description="Local-first learning-by-teaching MVP")
+app = FastAPI(title="PUPIL ZERO", version="1.6.0", description="Local-first learning-by-teaching MVP")
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
 
@@ -512,6 +512,8 @@ def link_school_teacher(payload: SchoolTeacherLinkRequest, admin: dict[str, Any]
             raise HTTPException(404, "Teacher account not found. The teacher must register first.")
         try:
             con.execute("INSERT INTO school_teachers(school_id,teacher_id) VALUES(?,?)", (school["school_id"], teacher["id"]))
+            con.execute("INSERT OR IGNORE INTO school_classes(school_id,class_id) SELECT ?,id FROM classes WHERE teacher_id=?",
+                        (school["school_id"], teacher["id"]))
         except sqlite3.IntegrityError:
             raise HTTPException(409, "Teacher is already linked to a school workspace")
     return {"linked": True, "teacher": {"id": teacher["id"], "email": teacher["email"], "display_name": teacher["display_name"]}}
