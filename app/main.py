@@ -145,15 +145,15 @@ def start_session(payload: StartRequest) -> dict[str, Any]:
     }
 
 
-def make_demo_reply(student_text: str, count: int) -> str:
-    """Transparent fallback used only when no live model is configured."""
+def make_demo_reply(student_text: str, count: int, lesson_title: str) -> str:
+    """Transparent, topic-neutral fallback used only without a configured model."""
     if len(student_text.strip()) < 8:
         return "ممكن تشرحلي أكتر؟ اديني مثال من الحياة اليومية عشان أفهم."
     if count == 1:
-        return "طيب، خليني أتأكد إني فهمت... هل كلامك يفضل صحيح لو حجم البيتزا اتغير؟ وليه؟"
+        return f"طيب، هل تقدر تديني مثال من حياتنا اليومية يوضح درس {lesson_title}؟"
     if count == 2:
-        return "طب ممكن تشرحلي الفرق بين ١/٢ و٢/٤ برسمة أو مثال بسيط؟"
-    return "أنا بدأت أفهم! ممكن تسألني سؤال صغير تتأكد بيه إني استوعبت الفكرة؟"
+        return "ممكن تشرح الفكرة بطريقة تانية، كأنك بتشرحها لزميلك لأول مرة؟"
+    return "بدأت أفهم! ممكن تسألني سؤال صغير تتأكد بيه إني استوعبت الفكرة؟"
 
 
 @app.post("/api/message")
@@ -180,7 +180,7 @@ async def send_message(payload: MessageRequest) -> dict[str, str]:
             ) from exc
         mode = "live_ai"
     else:
-        reply = make_demo_reply(payload.text, student_count)
+        reply = make_demo_reply(payload.text, student_count, lesson['title_ar'])
         mode = "demo_fallback"
 
     transcript.append({"role": "ai", "text": reply})
