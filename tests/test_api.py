@@ -269,3 +269,59 @@ def test_assignment_lifecycle_and_class_isolation(tmp_path, monkeypatch):
         assert teacher.post("/api/teacher/assignments", json={
             "class_id": "not-owned", "title": "Cross class", "lesson_id": "fractions"
         }).status_code == 404
+
+
+def test_student_progress_and_teacher_class_analytics_are_scoped(tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "DB_PATH", tmp_path / "progress.sqlite3")
+    with TestClient(main.app) as teacher, TestClient(main.app) as student, TestClient(main.app) as other_teacher, TestClient(main.app) as other_student:
+        assert teacher.post("/api/auth/register-teacher", json={
+            "email": "progress-teacher@example.test", "password": "TeacherPass123!", "display_name": "Progress Teacher"
+        }).status_code == 201
+        classroom = teacher.post("/api/classes", json={"name": "Progress Class"})
+        assert classroom.status_code == 201
+        joined = student.post("/api/classes/join", json={
+            "join_code": classroom.json()["join_code"], "display_name": "Progress Learner",
+            "email": "progress-student@example.test", "password": "StudentPass123!"
+        })
+        assert joined.status_code == 201
+        student_id = joined.json()["student"]["id"]
+
+        started = student.post("/api/sessions", json={
+            "lesson_id": "fractions", "persona": "milo", "class_id": classroom.json()["id"]
+        })
+        assert started.status_code == 200
+        sid = started.json()["session_id"]
+        assert student.post("/api/message", json={
+            "session_id": sid, "text": "النصف هو جزء من جزأين متساويين في الكل"
+        }).status_code == 200
+
+        own = student.get("/api/student/progress")
+        assert own.status_code == 200
+        assert own.json()["session_count"] == 1
+        assert own.json()["lessons"][0]["lesson_id"] == "fractions"
+        assert own.json()["interpretation_warning"]
+
+        class_report = teacher.get(f"/api/teacher/classes/{classroom.json()['id']}/progress")
+        assert class_report.status_code == 200
+        assert class_report.json()["student_count"] == 1
+        assert class_report.json()["students"][0]["student_id"] == student_id
+        assert class_report.json()["students"][0]["session_count"] == 1
+
+        individual = teacher.get(f"/api/teacher/students/{student_id}/progress?class_id={classroom.json()['id']}")
+        assert individual.status_code == 200
+        assert individual.json()["session_count"] == 1
+
+        assert other_teacher.post("/api/auth/register-teacher", json={
+            "email": "other-progress@example.test", "password": "TeacherPass123!", "display_name": "Other Teacher"
+        }).status_code == 201
+        assert other_teacher.get(f"/api/teacher/classes/{classroom.json()['id']}/progress").status_code == 404
+        assert other_teacher.get(f"/api/teacher/students/{student_id}/progress?class_id={classroom.json()['id']}").status_code == 404
+
+        other_class = other_teacher.post("/api/classes", json={"name": "Other Class"})
+        assert other_class.status_code == 201
+        other_join = other_student.post("/api/classes/join", json={
+            "join_code": other_class.json()["join_code"], "display_name": "Other Learner",
+            "email": "other-progress-student@example.test", "password": "StudentPass123!"
+        })
+        assert other_join.status_code == 201
+        assert student.get("/api/student/progress?class_id=" + other_class.json()["id"]).status_code == 404
