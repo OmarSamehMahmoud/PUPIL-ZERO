@@ -1,6 +1,6 @@
 # PUPIL ZERO
 
-**Prototype version: 1.5.0**
+**Prototype version: 1.6.0**
 
 **Teach an AI. Discover what you really know.**
 
@@ -18,7 +18,7 @@ PUPIL ZERO is an Arabic-first, learning-by-teaching prototype. A learner explain
 - Student progress endpoint summarizing their own sessions, lessons visited, and longitudinal concept keyword signals; optional class filter is restricted to their memberships.
 - Teacher class progress dashboard with per-student session counts, lessons visited, and evidence-signal summaries; individual progress is available only when the student belongs to a class owned by that teacher.
 - Parent accounts can only be created from a teacher-issued, single-use guardian invitation tied to a specific student and class; invitations expire after seven days.
-- School workspaces: a school administrator can create a school account, link existing teacher accounts by email, and view school-scoped teacher/class/enrollment counts. Classes created by a linked teacher are automatically included in that school's overview.
+- School workspaces: a school administrator can create a school account, invite a teacher by email with a single-use seven-day registration token, link an existing teacher account, and view school-scoped teacher/class/enrollment counts. Existing classes are included when an existing teacher is linked; future classes created by an invited/linked teacher are automatically included. Admins can unlink a teacher from the school without deleting the teacher account or their classes.
 - Parent portal is restricted to the linked student/class pair and shows aggregate activity, lesson IDs, assignment submission status, and a downloadable PDF report. It does not expose chat transcripts.
 - Arabic account portal at `/account`.
 - Arabic RTL student experience, responsive layout, text chat, and optional browser speech input/output.
@@ -119,7 +119,10 @@ Tests are committed and a GitHub Actions workflow runs them on pushes and pull r
 - `POST /api/teacher/students/{student_id}/guardian-invite?class_id=...` — create a single-use, seven-day guardian invitation for a student in a class owned by the teacher.
 - `POST /api/auth/register-parent` — create a parent account using a valid guardian invitation.
 - `POST /api/auth/register-school-admin` — create a school workspace and its administrator account. JSON: `{"school_name":"North School","email":"admin@example.test","password":"at-least-10-characters","display_name":"School Admin"}`.
-- `POST /api/school-admin/teachers` — link an existing teacher account by email to the signed-in administrator's school.
+- `POST /api/school-admin/teacher-invites` — generate a single-use, seven-day teacher registration invitation for an email address.
+- `POST /api/auth/register-invited-teacher` — create a teacher account using a valid school invitation; the email must match the invitation.
+- `POST /api/school-admin/teachers` — link an existing teacher account by email and include that teacher's existing classes in the school overview.
+- `DELETE /api/school-admin/teachers/{teacher_id}` — unlink a teacher and remove their classes from the school's overview; teacher account and class records remain intact.
 - `GET /api/school-admin/overview` — list only the signed-in school's linked teachers, classes, and enrollment counts.
 - School administrator dashboard: `/school-admin`.
 - `GET /api/parent/students` — list only student/class links owned by the signed-in parent.
@@ -147,7 +150,7 @@ The lesson content in this repository is original demonstrator content, not copi
 ## Safety, privacy, and limitations
 
 - This is a locally tested classroom- and school-scoping foundation, not a production-ready multi-school deployment. Existing legacy sessions remain unassigned and are deliberately excluded from teacher dashboards. Do not use it to store real student records or expose it to a school network/public internet yet.
-- Students can sign in after class enrollment, select an enrolled class, and create class-linked sessions. Assignment editing/deletion, student account recovery, due-date enforcement, validated educational measurement, and deployment-grade controls remain pending. The initial school workspace is a single-admin/single-school prototype: teachers must register first and be linked by email; no school-issued invitation, staff removal, role hierarchy, or cross-school teacher governance is implemented. The first PDF export uses English-safe labels and ASCII fallback for names until an Arabic shaping font is bundled.
+- Students can sign in after class enrollment, select an enrolled class, and create class-linked sessions. Assignment editing/deletion, student account recovery, due-date enforcement, validated educational measurement, and deployment-grade controls remain pending. The initial school workspace is a single-admin/single-school prototype. Teacher invitations are email-bound tokens but email delivery is not built in; administrators must securely share the generated link. Unlinking removes school-level visibility but does not disable the teacher's standalone account or delete class/student records. Staff role hierarchy, audit history, invitation revocation, and full ownership-transfer workflows remain pending. The first PDF export uses English-safe labels and ASCII fallback for names until an Arabic shaping font is bundled.
 - Account registration is open in this local prototype. Before deployment, add administrator-controlled teacher invitations, rate limiting, password reset/recovery, secure HTTPS cookie configuration, CSRF protection appropriate to the deployment, audit logging, and a reviewed data-retention/deletion workflow.
 - Before any real pilot with minors, obtain school and parent/guardian approvals, define retention/deletion rules, and implement authentication and access controls.
 - Avoid collecting names, phone numbers, precise location, face/video, or raw voice recordings. The journey feature uses a random browser-local UUID rather than a name or account; it is a pseudonymous identifier, so protect the local database and browser profile.
