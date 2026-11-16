@@ -391,6 +391,8 @@ def register_parent(payload: ParentRegisterRequest, response: Response) -> dict[
         invite = con.execute("SELECT * FROM guardian_invites WHERE token_hash=? AND used_at IS NULL AND expires_at>?", (invite_hash, int(time.time()))).fetchone()
         if not invite:
             raise HTTPException(400, "Invitation is invalid, expired, or already used")
+        if con.execute("SELECT 1 FROM users WHERE email=? UNION ALL SELECT 1 FROM parent_accounts WHERE email=?", (email,email)).fetchone():
+            raise HTTPException(409, "An account with this email already exists")
         try:
             con.execute("INSERT INTO parent_accounts(id,email,display_name,password_salt,password_hash) VALUES(?,?,?,?,?)", (parent_id,email,payload.display_name.strip(),salt,password_hash))
         except sqlite3.IntegrityError as exc:
