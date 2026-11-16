@@ -676,3 +676,33 @@ def test_daily_learning_experience_and_role_scoped_notifications(tmp_path, monke
         assert notification["kind"]=="attendance"
         assert student.post(f"/api/notifications/{notification['id']}/read",json={}).status_code==200
         assert student.get("/api/parent/students").status_code==401
+
+
+
+def test_student_adaptive_study_plan_and_single_use_quiz(tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "DB_PATH", tmp_path / "learning_engine.sqlite3")
+    with TestClient(main.app) as teacher, TestClient(main.app) as student:
+        assert teacher.post("/api/auth/register-teacher", json={
+            "email":"engine-teacher@example.test","password":"TeacherPass123!","display_name":"Teacher"}).status_code==201
+        classroom=teacher.post("/api/classes",json={"name":"Engine Class"})
+        joined=student.post("/api/classes/join",json={"join_code":classroom.json()["join_code"],
+            "display_name":"Engine Student","email":"engine-student@example.test","password":"StudentPass123!"})
+        assert joined.status_code==201
+        plan=student.get("/api/student/study-plan/fractions")
+        assert plan.status_code==200
+        assert len(plan.json()["steps"])==3
+        assert all(x["priority"]=="practice" for x in plan.json()["steps"])
+        created=student.post("/api/student/quizzes",json={"lesson_id":"fractions"})
+        assert created.status_code==201
+        quiz=created.json()
+        assert len(quiz["questions"])==3
+        assert "correct_option" not in quiz["questions"][0]
+        answers={q["id"]:q["options"][0]["id"] for q in quiz["questions"]}
+        submitted=student.post(f"/api/student/quizzes/{quiz['quiz_id']}/submit",json={"answers":answers})
+        assert submitted.status_code==200
+        assert submitted.json()["total"]==3
+        assert len(submitted.json()["details"])==3
+        assert student.post(f"/api/student/quizzes/{quiz['quiz_id']}/submit",json={"answers":answers}).status_code==409
+        history=student.get("/api/student/quizzes/history")
+        assert history.status_code==200 and len(history.json()["history"])==1
+        assert teacher.get(f"/api/student/study-plan/fractions").status_code==401
