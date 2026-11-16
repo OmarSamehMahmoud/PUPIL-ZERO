@@ -1,30 +1,37 @@
-# Product scope — PUPIL ZERO MVP
+# Product scope — PUPIL ZERO
 
 ## Product principle
-A student teaches an AI classmate. The classmate uses a controlled misconception profile to ask follow-up questions. The product turns the interaction into formative evidence for the learner and teacher.
+A student teaches an AI classmate. The classmate asks follow-up questions from a misconception-oriented profile. The interaction creates formative evidence for learner reflection and teacher review.
 
-## First demonstrator
-- Audience: Egyptian preparatory-school learners.
-- Subject: Mathematics.
-- Topic: fractions (original sample prompts).
-- Interaction: Arabic text and browser-native speech input/output.
-- Persona: MILO, initially.
-- Teacher output: transcript plus conservative evidence indicators.
+## Implemented in this repository
+- FastAPI + SQLite local web application.
+- Arabic RTL student experience with text interaction and optional browser speech APIs.
+- Three selectable classmates: MILO, NOURA, ZIZO, with distinct local-LLM persona prompts.
+- Three original demonstrator learning units: fractions, decimals, introductory ratios.
+- Local Ollama and OpenAI-compatible inference adapters.
+- Explicit deterministic demo fallback when no model is configured.
+- Teacher dashboard at `/teacher`, with session list, transcript detail, and keyword evidence indicators.
 
-## What this MVP is — and is not
-This repository currently implements a local web prototype and a deterministic conversation/assessment scaffold. It does **not** yet call an LLM, provide human-like free-form dialogue, or provide validated educational measurement. Do not describe the current version as a fully autonomous AI tutor.
+## Not yet production-ready
+- No teacher/student authentication or role-based authorization.
+- No multi-school or class management.
+- No verified Egyptian Ministry grade/term mapping or imported official textbook content.
+- No validated assessment model; evidence is keyword matching only.
+- No expert-reviewed pedagogical evaluation, accessibility audit, or minor-pilot approval.
+- Browser voice recognition is not guaranteed offline.
 
-Next engineering milestones:
-1. Replace canned turn responses with a provider-neutral dialogue interface.
-2. Add curriculum-grounded retrieval and strict source metadata.
-3. Add persona state machine and misconception-specific follow-up paths.
-4. Add teacher report with transcript evidence spans.
-5. Validate assessment against expert-created annotations before reporting accuracy.
-6. Add school/guardian consent and retention controls before any real minor pilot.
+## Required next milestones
+1. Add authentication, authorization, school/class boundaries, and secure deployment settings.
+2. Add teacher-controlled student identifiers or pseudonyms, consent workflows, retention and deletion controls.
+3. Verify each lesson's grade/term mapping against the official current curriculum and record source/version metadata.
+4. Expand original lesson content with teacher review and clear learning objectives.
+5. Replace keyword-only assessment with expert-annotated evidence spans and evaluate agreement.
+6. Run usability, safeguarding, and learning-outcome pilots before making efficacy claims.
 
 ## Design constraints
-- No dedicated hardware.
-- Text mode must remain available if browser speech APIs are unsupported.
-- No raw audio storage by default.
-- Never infer a student's mental health, intelligence, or diagnosis.
-- Do not expose a numeric score as a formal grade.
+- Local-first operation remains the default.
+- Text mode must work without browser speech support.
+- Do not store raw audio by default.
+- Never infer mental health, intelligence, or diagnosis.
+- Do not present a coverage indicator as a formal grade.
+- Do not expose the unauthenticated teacher dashboard beyond localhost.
