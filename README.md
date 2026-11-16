@@ -109,9 +109,9 @@ Tests are committed and a GitHub Actions workflow runs them on pushes and pull r
 - `POST /api/sessions` — create a session. Students must provide an enrolled `class_id`; the server derives the student and teacher ownership from the membership record. Teacher-created local sessions remain teacher-owned; anonymous demo sessions remain unassigned.
 - `POST /api/message` — send a student explanation. JSON: `{"session_id":"...","text":"..."}`.
 - `POST /api/finish` — return transcript, formative evidence report, and current dialogue state.
-- `GET /api/teacher/sessions` — recent local sessions.
+- `GET /api/teacher/sessions` — recent sessions owned by the signed-in teacher; optional `class_id` narrows to one owned class.
 - `GET /api/teacher/sessions/{session_id}` — transcript and report for one session.
-- `GET /api/teacher/insights` — aggregate evidence and review signals by lesson; optional `lesson_id` filter. These are not mastery scores.
+- `GET /api/teacher/insights` — aggregate evidence and review signals by lesson; optional `lesson_id` and owned `class_id` filters. These are not mastery scores.
 - `GET /api/teacher/priorities` — rank concepts flagged for teacher review;
 - `GET /api/teacher/interventions?lesson_id=fractions&concept_id=unit_fraction` — create a teacher-reviewed suggestion from authored lesson content, including anonymous feedback counts.
 - `POST /api/teacher/interventions/feedback` — save a teacher rating (`helpful`, `partly_helpful`, or `not_helpful`) and optional note (maximum 500 characters).
