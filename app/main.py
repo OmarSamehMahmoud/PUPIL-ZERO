@@ -840,8 +840,8 @@ def school_admin_record_lesson(payload: SchoolLessonRecordRequest,
 
 
 @app.get("/api/school-admin/operations-report")
-def school_admin_operations_report(date_from: str = Query(..., pattern=r"^\\d{4}-\\d{2}-\\d{2}$"),
-                                   date_to: str = Query(..., pattern=r"^\\d{4}-\\d{2}-\\d{2}$"),
+def school_admin_operations_report(date_from: str = Query(..., pattern=r"^\d{4}-\d{2}-\d{2}$"),
+                                   date_to: str = Query(..., pattern=r"^\d{4}-\d{2}-\d{2}$"),
                                    admin: dict[str, Any] = Depends(current_school_admin)) -> dict[str, Any]:
     try:
         date.fromisoformat(date_from)
