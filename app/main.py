@@ -21,15 +21,15 @@ from app.assessment import assess_explanation
 from app.intervention_planner import build_intervention_plan
 from app.adaptive import adaptation_summary
 from app.curriculum import get_lesson
-from app.llm import generate_reply, public_status
+from app.llm import generate_reply, public_status, generate_formative_quiz
 from app.learning_journey import build_learning_journey
 from app.pedagogy import advance_state, initial_state, state_context
 from app.teacher_intelligence import build_review_priorities
-from app.learning_engine import build_study_plan, get_quiz_questions, grade_quiz
+from app.learning_engine import build_study_plan, get_quiz_questions, grade_quiz, validate_question_set
 
 ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = ROOT / "pupil_zero.db"
-app = FastAPI(title="PUPIL ZERO", version="2.0.0", description="Local-first learning-by-teaching MVP")
+app = FastAPI(title="PUPIL ZERO", version="2.1.0", description="Local-first learning-by-teaching MVP")
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
 
@@ -561,12 +561,23 @@ def student_study_plan(lesson_id: str, student: dict[str, Any] = Depends(current
 
 
 @app.post("/api/student/quizzes", status_code=201)
-def create_student_quiz(payload: QuizStartRequest,
-                        student: dict[str, Any] = Depends(current_student)) -> dict[str, Any]:
+async def create_student_quiz(payload: QuizStartRequest,
+                              student: dict[str, Any] = Depends(current_student)) -> dict[str, Any]:
     lesson = get_lesson(payload.lesson_id)
     if not lesson:
         raise HTTPException(404, "Lesson not found")
-    questions = get_quiz_questions(payload.lesson_id)
+    status = public_status()
+    if status.get("configured"):
+        try:
+            questions = validate_question_set(await generate_formative_quiz(lesson, count=3), lesson)
+        except Exception as exc:
+            raise HTTPException(503, "Local AI quiz generation failed. Check the configured model and try again.") from exc
+        source = "local_ai"
+        generation_notice = "تم توليد الأسئلة بواسطة النموذج المحلي، ويجب مراجعتها من المعلم قبل استخدامها رسميًا."
+    else:
+        questions = get_quiz_questions(payload.lesson_id)
+        source = "authored_bank"
+        generation_notice = "النموذج المحلي غير مفعّل؛ هذه أسئلة تدريبية مكتوبة مسبقًا وليست مولّدة بالذكاء الاصطناعي."
     if not questions:
         raise HTTPException(404, "No formative questions are available for this lesson")
     quiz_id = str(uuid.uuid4())
@@ -576,7 +587,8 @@ def create_student_quiz(payload: QuizStartRequest,
     public_questions = [{k: v for k, v in question.items() if k not in ("correct_option", "explanation")}
                         for question in questions]
     return {"quiz_id": quiz_id, "lesson_id": payload.lesson_id, "lesson": lesson["title_ar"],
-            "questions": public_questions, "notice": "اختبار تدريبي قصير، وليس امتحانًا رسميًا أو درجة مدرسية."}
+            "questions": public_questions, "source": source, "generation_notice": generation_notice,
+            "notice": "اختبار تدريبي قصير، وليس امتحانًا رسميًا أو درجة مدرسية."}
 
 
 @app.post("/api/student/quizzes/{quiz_id}/submit")
