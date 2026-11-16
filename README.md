@@ -1,6 +1,6 @@
 # PUPIL ZERO
 
-**Prototype version: 2.0.0**
+**Prototype version: 2.1.0**
 
 **Teach an AI. Discover what you really know.**
 
@@ -18,6 +18,7 @@ PUPIL ZERO is an Arabic-first, learning-by-teaching prototype. A learner explain
 - Student progress endpoint summarizing their own sessions, lessons visited, and longitudinal concept keyword signals; optional class filter is restricted to their memberships.
 - Teacher class progress dashboard with per-student session counts, lessons visited, and evidence-signal summaries; individual progress is available only when the student belongs to a class owned by that teacher.
 - Parent accounts can only be created from a teacher-issued, single-use guardian invitation tied to a specific student and class; invitations expire after seven days.
+- Local AI formative quiz generation (v2.1): when a local/self-hosted provider and model are configured, the server asks the model for three lesson-grounded MCQs, validates the JSON schema and concept IDs, stores the answer key privately, and grades only on the server. If no model is configured, the app explicitly uses the authored question bank; it never labels authored questions as AI-generated. A configured but failing model returns an error rather than silently falling back. Generated questions are candidate practice material and require teacher review.
 - Adaptive learning engine: the student hub provides a per-lesson study path based on explainable keyword signals from the learner’s own prior explanations, plus single-use low-stakes formative quizzes. Quiz questions are authored in the repository, correct answers are withheld until submission, grading is server-side, and attempts are stored per student. This is not model-generated assessment, an official exam, a validated mastery measure, or a replacement for teacher review.
 - Daily learning experience: students have a protected `/student` hub with their linked school timetable, assignment inbox, attendance history, and in-app notifications. Teachers can view their linked-school teaching timetable and mark attendance only for classes assigned to them. Parents can view attendance, timetable, and notifications only through an explicitly linked student/class. New assignments notify enrolled students; attendance updates notify the student and linked parent accounts. Notifications are local in-app records; no email, push, or background due-date reminders are sent.
 - School learning operations: school administrators can define a weekly timetable for existing class/subject/teacher assignments (overlapping periods for the same class or teacher are rejected), record per-student attendance by date, log lesson delivery as completed/cancelled/missed, and generate date-range operational summaries. Records are scoped to the current school; attendance and lesson logs are not learning or mastery measures.
@@ -90,7 +91,7 @@ PUPIL ZERO is an Arabic-first, learning-by-teaching prototype. A learner explain
 
 Without a configured provider/model, the app uses a clearly labelled deterministic demo mode. A configured but unreachable model produces an error; it does not silently switch to demo mode.
 
-## OpenAI-compatible local inference
+## v2.1 local AI question generation\n\nWith `PUPIL_LLM_PROVIDER=ollama` (or a self-hosted OpenAI-compatible endpoint) and a valid `PUPIL_LLM_MODEL`, quiz creation requests three Arabic multiple-choice questions from the configured model using only the selected lesson's authored objectives and concept notes. The server validates the model output, rejects unknown concept IDs or malformed options, stores the answer key privately, and grades submissions server-side. If the provider is not configured, the pre-authored bank is used and the API labels it as such. If a configured provider fails or returns invalid output, quiz creation returns HTTP 503; it does not disguise a fallback as live AI.\n\nModel-generated questions are unreviewed candidates for low-stakes practice, not official curriculum content, exams, or validated measures. A teacher should review them before classroom use. Student names, account details, and chat transcripts are not sent to the quiz-generation prompt.\n\n## OpenAI-compatible local inference
 
 Set `PUPIL_LLM_PROVIDER=openai-compatible`, `PUPIL_LLM_BASE_URL` to the server base URL (without `/v1/chat/completions`), and `PUPIL_LLM_MODEL` to its model identifier. Set `PUPIL_LLM_API_KEY` only when required by that endpoint.
 
@@ -119,7 +120,7 @@ Tests are committed and a GitHub Actions workflow runs them on pushes and pull r
 - `GET /api/teacher/assignments` — list owned assignments and each class member’s submitted/pending status; optional owned `class_id` filter.
 - `GET /api/student/assignments` — list assignments for the signed-in student’s enrolled classes; optional `class_id` filter.
 - `GET /api/student/study-plan/{lesson_id}` — explainable review sequence based on the student’s prior session evidence.
-- `POST /api/student/quizzes` — create a private formative quiz for a supported lesson.
+- `POST /api/student/quizzes` — create a private formative quiz; uses validated local-model generation when configured, otherwise clearly labels the authored bank.
 - `POST /api/student/quizzes/{quiz_id}/submit` — submit answers once; server-side grading and explanations are returned.
 - `GET /api/student/quizzes/history` — own submitted formative quiz history.
 - `GET /api/student/dashboard` — linked-school timetable, assignment inbox, attendance history, and recent notifications.
