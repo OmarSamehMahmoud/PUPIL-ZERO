@@ -1,6 +1,6 @@
 # PUPIL ZERO
 
-**Prototype version: 1.0.0**
+**Prototype version: 1.1.0**
 
 **Teach an AI. Discover what you really know.**
 
@@ -11,6 +11,8 @@ PUPIL ZERO is an Arabic-first, learning-by-teaching prototype. A learner explain
 - FastAPI backend and SQLite session history.
 - Local teacher accounts with scrypt password hashing, opaque random sessions stored as SHA-256 token digests, HttpOnly/SameSite cookies, login/logout, and a protected teacher dashboard/API.
 - Classroom registry: teachers can create classes with join codes, students can create accounts and join with a code, and teachers can view their class roster.
+- Class-linked student learning: joining a class signs the student in locally; the student can select an enrolled class, start a session linked to that class and its owning teacher, and view only their own account-linked learning journey.
+- Teacher data scoping: teacher session lists, details, insights, priorities, class rosters, and intervention feedback are restricted to the signed-in teacher account. Legacy sessions without an owner are excluded from teacher dashboards.
 - Arabic account portal at `/account`.
 - Arabic RTL student experience, responsive layout, text chat, and optional browser speech input/output.
 - Three selectable classmates: MILO, NOURA, and ZIZO. Each has a distinct prompt profile.
@@ -99,11 +101,12 @@ Tests are committed and a GitHub Actions workflow runs them on pushes and pull r
 - `POST /api/classes` — create a class as the authenticated teacher; returns an eight-character join code.
 - `GET /api/classes` — list the authenticated teacher's classes.
 - `GET /api/classes/{class_id}/members` — list members of a class owned by the authenticated teacher.
-- `POST /api/classes/join` — create a student account and enroll it using a class join code.
+- `POST /api/classes/join` — create a student account, enroll it using a class join code, and sign the student in.
+- `GET /api/student/classes` — list classes for the signed-in student.
 
 - `GET /api/health` — app and configured inference mode.
 - `GET /api/lessons` — demonstrator lesson catalog.
-- `POST /api/sessions` — create a session. JSON: `{"lesson_id":"fractions","persona":"milo"}`.
+- `POST /api/sessions` — create a session. Students must provide an enrolled `class_id`; the server derives the student and teacher ownership from the membership record. Teacher-created local sessions remain teacher-owned; anonymous demo sessions remain unassigned.
 - `POST /api/message` — send a student explanation. JSON: `{"session_id":"...","text":"..."}`.
 - `POST /api/finish` — return transcript, formative evidence report, and current dialogue state.
 - `GET /api/teacher/sessions` — recent local sessions.
@@ -121,8 +124,8 @@ The lesson content in this repository is original demonstrator content, not copi
 
 ## Safety, privacy, and limitations
 
-- This is an authentication and class-management foundation, not a production-ready multi-school deployment. Existing learning sessions and aggregate reports have not yet been fully linked to class memberships and teacher ownership; do not use it to store real student records or expose it to a school network/public internet yet.
-- Student class enrollment is implemented, but a complete student sign-in/classroom learning portal and class-scoped learning history are still pending.
+- This is a locally tested classroom-scoping foundation, not a production-ready multi-school deployment. Existing legacy sessions remain unassigned and are deliberately excluded from teacher dashboards. Do not use it to store real student records or expose it to a school network/public internet yet.
+- Students can sign in after class enrollment, select an enrolled class, and create class-linked sessions. Full school administration, class invitations, student account recovery, and deployment-grade controls remain pending.
 - Account registration is open in this local prototype. Before deployment, add administrator-controlled teacher invitations, rate limiting, password reset/recovery, secure HTTPS cookie configuration, CSRF protection appropriate to the deployment, audit logging, and a reviewed data-retention/deletion workflow.
 - Before any real pilot with minors, obtain school and parent/guardian approvals, define retention/deletion rules, and implement authentication and access controls.
 - Avoid collecting names, phone numbers, precise location, face/video, or raw voice recordings. The journey feature uses a random browser-local UUID rather than a name or account; it is a pseudonymous identifier, so protect the local database and browser profile.
