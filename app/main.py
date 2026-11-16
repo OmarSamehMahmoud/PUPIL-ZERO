@@ -24,7 +24,7 @@ from app.teacher_intelligence import build_review_priorities
 
 ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = ROOT / "pupil_zero.db"
-app = FastAPI(title="PUPIL ZERO", version="1.1.0", description="Local-first learning-by-teaching MVP")
+app = FastAPI(title="PUPIL ZERO", version="1.2.0", description="Local-first learning-by-teaching MVP")
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
 
@@ -33,6 +33,7 @@ class StartRequest(BaseModel):
     persona: str = "milo"
     learner_id: str | None = Field(default=None, min_length=36, max_length=36)
     class_id: str | None = None
+    assignment_id: str | None = None
 
 
 class MessageRequest(BaseModel):
@@ -62,6 +63,13 @@ class StudentJoinRequest(BaseModel):
     display_name: str = Field(min_length=2, max_length=80)
     email: str = Field(min_length=5, max_length=254)
     password: str = Field(min_length=10, max_length=128)
+
+class AssignmentCreateRequest(BaseModel):
+    class_id: str = Field(min_length=1, max_length=64)
+    title: str = Field(min_length=2, max_length=120)
+    description: str = Field(default="", max_length=1500)
+    lesson_id: str = Field(min_length=1, max_length=64)
+    due_at: str = Field(default="", max_length=40)
 
 class InterventionFeedbackRequest(BaseModel):
     lesson_id: str
@@ -124,6 +132,22 @@ def init_db() -> None:
         feedback_columns = {row["name"] for row in con.execute("PRAGMA table_info(intervention_feedback)")}
         if "teacher_id" not in feedback_columns:
             con.execute("ALTER TABLE intervention_feedback ADD COLUMN teacher_id TEXT")
+        con.execute("""CREATE TABLE IF NOT EXISTS assignments (
+            id TEXT PRIMARY KEY, teacher_id TEXT NOT NULL REFERENCES users(id),
+            class_id TEXT NOT NULL REFERENCES classes(id), title TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '', lesson_id TEXT NOT NULL,
+            due_at TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )""")
+        con.execute("""CREATE TABLE IF NOT EXISTS assignment_submissions (
+            assignment_id TEXT NOT NULL REFERENCES assignments(id),
+            student_id TEXT NOT NULL REFERENCES users(id),
+            session_id TEXT NOT NULL REFERENCES sessions(id),
+            submitted_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY(assignment_id, student_id)
+        )""")
+        session_columns = {row["name"] for row in con.execute("PRAGMA table_info(sessions)")}
+        if "assignment_id" not in session_columns:
+            con.execute("ALTER TABLE sessions ADD COLUMN assignment_id TEXT")
 
 
 @app.on_event("startup")
@@ -246,6 +270,60 @@ def join_class(payload: StudentJoinRequest, response: Response) -> dict[str,Any]
         con.execute("INSERT INTO auth_sessions(token_hash,user_id,expires_at) VALUES(?,?,?)",(token_digest(token),student_id,int(time.time())+604800))
     response.set_cookie("pupil_session",token,httponly=True,samesite="strict",max_age=604800,path="/")
     return {"student":{"id":student_id,"display_name":payload.display_name.strip()},"class":{"id":classroom["id"],"name":classroom["name"]}}
+
+@app.post("/api/teacher/assignments", status_code=201)
+def create_assignment(payload: AssignmentCreateRequest, teacher: dict[str,Any] = Depends(current_teacher)) -> dict[str,Any]:
+    if not get_lesson(payload.lesson_id):
+        raise HTTPException(404, "Lesson not found")
+    assignment_id = str(uuid.uuid4())
+    with db() as con:
+        classroom = con.execute("SELECT id FROM classes WHERE id=? AND teacher_id=?", (payload.class_id, teacher["id"])).fetchone()
+        if not classroom:
+            raise HTTPException(404, "Class not found")
+        con.execute("INSERT INTO assignments(id,teacher_id,class_id,title,description,lesson_id,due_at) VALUES(?,?,?,?,?,?,?)",
+                    (assignment_id, teacher["id"], payload.class_id, payload.title.strip(), payload.description.strip(), payload.lesson_id, payload.due_at.strip()))
+    return {"id": assignment_id, "title": payload.title.strip(), "class_id": payload.class_id, "lesson_id": payload.lesson_id, "due_at": payload.due_at.strip()}
+
+@app.get("/api/teacher/assignments")
+def teacher_assignments(class_id: str | None = Query(default=None), teacher: dict[str,Any] = Depends(current_teacher)) -> dict[str,Any]:
+    with db() as con:
+        query = """SELECT a.*, c.name AS class_name,
+                   (SELECT COUNT(*) FROM class_members m WHERE m.class_id=a.class_id) AS student_count
+                   FROM assignments a JOIN classes c ON c.id=a.class_id WHERE a.teacher_id=?"""
+        params: list[Any] = [teacher["id"]]
+        if class_id:
+            if not con.execute("SELECT 1 FROM classes WHERE id=? AND teacher_id=?", (class_id, teacher["id"])).fetchone():
+                raise HTTPException(404, "Class not found")
+            query += " AND a.class_id=?"
+            params.append(class_id)
+        query += " ORDER BY a.created_at DESC"
+        assignments = con.execute(query, tuple(params)).fetchall()
+        results = []
+        for assignment in assignments:
+            submissions = con.execute("""SELECT u.id AS student_id,u.display_name,s.session_id,s.submitted_at
+                FROM assignment_submissions s JOIN users u ON u.id=s.student_id
+                WHERE s.assignment_id=? ORDER BY s.submitted_at DESC""", (assignment["id"],)).fetchall()
+            results.append({**dict(assignment), "submitted_count": len(submissions),
+                            "submissions": [dict(item) for item in submissions]})
+    return {"assignments": results}
+
+@app.get("/api/student/assignments")
+def student_assignments(class_id: str | None = Query(default=None), student: dict[str,Any] = Depends(current_student)) -> dict[str,Any]:
+    with db() as con:
+        query = """SELECT a.id,a.title,a.description,a.lesson_id,a.due_at,a.class_id,c.name AS class_name,
+                   CASE WHEN sub.student_id IS NULL THEN 0 ELSE 1 END AS submitted,
+                   sub.submitted_at,sub.session_id
+                   FROM assignments a JOIN classes c ON c.id=a.class_id
+                   JOIN class_members m ON m.class_id=a.class_id
+                   LEFT JOIN assignment_submissions sub ON sub.assignment_id=a.id AND sub.student_id=?
+                   WHERE m.student_id=?"""
+        params: list[Any] = [student["id"], student["id"]]
+        if class_id:
+            query += " AND a.class_id=?"
+            params.append(class_id)
+        query += " ORDER BY CASE WHEN sub.student_id IS NULL THEN 0 ELSE 1 END, a.created_at DESC"
+        rows = con.execute(query, tuple(params)).fetchall()
+    return {"assignments": [dict(row) for row in rows]}
 
 @app.get("/account", response_class=HTMLResponse)
 def account_page() -> str:
@@ -500,7 +578,7 @@ def teacher_session_detail(session_id: str, teacher: dict[str,Any] = Depends(cur
 
 @app.get("/api/health")
 def health() -> dict[str, Any]:
-    return {"status": "ok", "product": "PUPIL ZERO", "version": "1.1.0", **public_status()}
+    return {"status": "ok", "product": "PUPIL ZERO", "version": "1.2.0", **public_status()}
 
 
 @app.get("/api/lessons")
@@ -528,6 +606,16 @@ def start_session(payload: StartRequest, request: Request) -> dict[str, Any]:
             raise HTTPException(403, "You are not enrolled in this classroom")
         student_id, class_id, teacher_id = user["id"], membership["id"], membership["teacher_id"]
         learner_id = user["id"]
+        if payload.assignment_id:
+            with db() as con:
+                assignment = con.execute("SELECT id,lesson_id,class_id FROM assignments WHERE id=? AND class_id=?", (payload.assignment_id, class_id)).fetchone()
+                already = con.execute("SELECT 1 FROM assignment_submissions WHERE assignment_id=? AND student_id=?", (payload.assignment_id, student_id)).fetchone()
+            if not assignment:
+                raise HTTPException(404, "Assignment not found for this class")
+            if assignment["lesson_id"] != payload.lesson_id:
+                raise HTTPException(422, "Choose the lesson assigned by your teacher")
+            if already:
+                raise HTTPException(409, "This assignment has already been submitted")
     elif user and user.get("role") == "teacher":
         teacher_id = user["id"]
         learner_id = payload.learner_id or str(uuid.uuid4())
@@ -556,10 +644,10 @@ def start_session(payload: StartRequest, request: Request) -> dict[str, Any]:
     transcript = [{"role": "ai", "text": opening}]
     with db() as con:
         con.execute(
-            "INSERT INTO sessions(id, lesson_id, persona, transcript, state_json, learner_id, student_id, class_id, teacher_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO sessions(id, lesson_id, persona, transcript, state_json, learner_id, student_id, class_id, teacher_id, assignment_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (session_id, payload.lesson_id, payload.persona,
              json.dumps(transcript, ensure_ascii=False),
-             json.dumps(dialogue_state, ensure_ascii=False), learner_id, student_id, class_id, teacher_id),
+             json.dumps(dialogue_state, ensure_ascii=False), learner_id, student_id, class_id, teacher_id, payload.assignment_id if student_id else None),
         )
     return {
         "session_id": session_id,
@@ -647,6 +735,10 @@ def finish_session(payload: FinishRequest, request: Request) -> dict[str, Any]:
         raise HTTPException(404, "Session not found")
     transcript = json.loads(row["transcript"])
     lesson = get_lesson(row["lesson_id"])
+    if row["student_id"] and row["assignment_id"]:
+        with db() as con:
+            con.execute("INSERT OR IGNORE INTO assignment_submissions(assignment_id,student_id,session_id) VALUES(?,?,?)",
+                        (row["assignment_id"], row["student_id"], row["id"]))
     return {
         "transcript": transcript,
         "report": assess_explanation(transcript, lesson),
