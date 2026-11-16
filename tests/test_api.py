@@ -71,6 +71,12 @@ def test_student_and_teacher_flow_uses_local_database(tmp_path, monkeypatch):
         assert updated_journey.json()["session_count"] == 2
         assert {item["lesson_id"] for item in updated_journey.json()["timeline"]} == {"decimals", "fractions"}
 
+        plan = client.get("/api/teacher/interventions?lesson_id=decimals&concept_id=decimal_comparison")
+        assert plan.status_code == 200
+        assert plan.json()["teacher_decision_required"] is True
+        assert len(plan.json()["steps"]) == 4
+        assert client.get("/api/teacher/interventions?lesson_id=decimals&concept_id=missing").status_code == 404
+        assert client.get("/api/teacher/interventions?lesson_id=missing&concept_id=x").status_code == 404
         assert client.get("/teacher").status_code == 200
 
 
