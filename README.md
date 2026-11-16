@@ -1,6 +1,6 @@
 # PUPIL ZERO
 
-**Prototype version: 1.9.0**
+**Prototype version: 2.0.0**
 
 **Teach an AI. Discover what you really know.**
 
@@ -18,6 +18,7 @@ PUPIL ZERO is an Arabic-first, learning-by-teaching prototype. A learner explain
 - Student progress endpoint summarizing their own sessions, lessons visited, and longitudinal concept keyword signals; optional class filter is restricted to their memberships.
 - Teacher class progress dashboard with per-student session counts, lessons visited, and evidence-signal summaries; individual progress is available only when the student belongs to a class owned by that teacher.
 - Parent accounts can only be created from a teacher-issued, single-use guardian invitation tied to a specific student and class; invitations expire after seven days.
+- Adaptive learning engine: the student hub provides a per-lesson study path based on explainable keyword signals from the learner’s own prior explanations, plus single-use low-stakes formative quizzes. Quiz questions are authored in the repository, correct answers are withheld until submission, grading is server-side, and attempts are stored per student. This is not model-generated assessment, an official exam, a validated mastery measure, or a replacement for teacher review.
 - Daily learning experience: students have a protected `/student` hub with their linked school timetable, assignment inbox, attendance history, and in-app notifications. Teachers can view their linked-school teaching timetable and mark attendance only for classes assigned to them. Parents can view attendance, timetable, and notifications only through an explicitly linked student/class. New assignments notify enrolled students; attendance updates notify the student and linked parent accounts. Notifications are local in-app records; no email, push, or background due-date reminders are sent.
 - School learning operations: school administrators can define a weekly timetable for existing class/subject/teacher assignments (overlapping periods for the same class or teacher are rejected), record per-student attendance by date, log lesson delivery as completed/cancelled/missed, and generate date-range operational summaries. Records are scoped to the current school; attendance and lesson logs are not learning or mastery measures.
 - School academic management: school administrators can define departments, grade levels, and subjects, attach a grade level to a school class, and assign a linked teacher to teach a subject in a class. These are school-scoped administrative records and do not transfer class ownership or imply student mastery.
@@ -117,6 +118,10 @@ Tests are committed and a GitHub Actions workflow runs them on pushes and pull r
 - `POST /api/teacher/assignments` — publish an assignment to one class owned by the signed-in teacher. JSON: `{"class_id":"...","title":"Explain fractions","description":"Use an example","lesson_id":"fractions","due_at":"2026-11-20T18:00"}`.
 - `GET /api/teacher/assignments` — list owned assignments and each class member’s submitted/pending status; optional owned `class_id` filter.
 - `GET /api/student/assignments` — list assignments for the signed-in student’s enrolled classes; optional `class_id` filter.
+- `GET /api/student/study-plan/{lesson_id}` — explainable review sequence based on the student’s prior session evidence.
+- `POST /api/student/quizzes` — create a private formative quiz for a supported lesson.
+- `POST /api/student/quizzes/{quiz_id}/submit` — submit answers once; server-side grading and explanations are returned.
+- `GET /api/student/quizzes/history` — own submitted formative quiz history.
 - `GET /api/student/dashboard` — linked-school timetable, assignment inbox, attendance history, and recent notifications.
 - `GET /api/teacher/operations` — teaching timetable and linked-school class assignments for the signed-in teacher.
 - `POST /api/teacher/attendance` — mark attendance for a student in a class assigned to the signed-in teacher in a linked school.
