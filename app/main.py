@@ -89,6 +89,15 @@ class SchoolAdminRegisterRequest(BaseModel):
 class SchoolTeacherLinkRequest(BaseModel):
     teacher_email: str = Field(min_length=5, max_length=254)
 
+class SchoolTeacherInviteRequest(BaseModel):
+    email: str = Field(min_length=5, max_length=254)
+
+class InvitedTeacherRegisterRequest(BaseModel):
+    invite_token: str = Field(min_length=30, max_length=200)
+    email: str = Field(min_length=5, max_length=254)
+    password: str = Field(min_length=10, max_length=128)
+    display_name: str = Field(min_length=2, max_length=80)
+
 
 class InterventionFeedbackRequest(BaseModel):
     lesson_id: str
@@ -184,6 +193,11 @@ def init_db() -> None:
             PRIMARY KEY(school_id, class_id)
         )""")
         con.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_school_teachers_single_school ON school_teachers(teacher_id)")
+        con.execute("""CREATE TABLE IF NOT EXISTS school_teacher_invites (
+            token_hash TEXT PRIMARY KEY, school_id TEXT NOT NULL REFERENCES schools(id),
+            email TEXT NOT NULL, expires_at INTEGER NOT NULL, used_at TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )""")
         con.execute("""CREATE TABLE IF NOT EXISTS guardian_invites (
             token_hash TEXT PRIMARY KEY, student_id TEXT NOT NULL, class_id TEXT NOT NULL,
             teacher_id TEXT NOT NULL, expires_at INTEGER NOT NULL, used_at TEXT,
@@ -431,6 +445,61 @@ def register_school_admin(payload: SchoolAdminRegisterRequest, response: Respons
     response.set_cookie("pupil_session", token, httponly=True, samesite="strict", max_age=604800, path="/")
     return {"user": {"id": admin_id, "email": email, "display_name": payload.display_name.strip(), "role": "school_admin"},
             "school": {"id": school_id, "name": payload.school_name.strip()}}
+
+
+@app.post("/api/school-admin/teacher-invites", status_code=201)
+def create_school_teacher_invite(payload: SchoolTeacherInviteRequest, admin: dict[str, Any] = Depends(current_school_admin)) -> dict[str, Any]:
+    email = payload.email.strip().lower()
+    if "@" not in email:
+        raise HTTPException(422, "Enter a valid email address")
+    token = secrets.token_urlsafe(32)
+    digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    with db() as con:
+        school = con.execute("SELECT school_id FROM school_admin_accounts WHERE id=?", (admin["id"],)).fetchone()
+        if con.execute("SELECT 1 FROM users WHERE email=?", (email,)).fetchone():
+            raise HTTPException(409, "This email already has an account. Link the existing teacher instead.")
+        con.execute("INSERT INTO school_teacher_invites(token_hash,school_id,email,expires_at) VALUES(?,?,?,?)",
+                    (digest, school["school_id"], email, int(time.time()) + 7 * 86400))
+    return {"invite_token": token, "email": email, "expires_in_days": 7,
+            "registration_path": "/account?teacher_invite=" + token}
+
+
+@app.post("/api/auth/register-invited-teacher", status_code=201)
+def register_invited_teacher(payload: InvitedTeacherRegisterRequest, response: Response) -> dict[str, Any]:
+    email = payload.email.strip().lower()
+    if "@" not in email:
+        raise HTTPException(422, "Enter a valid email address")
+    digest = hashlib.sha256(payload.invite_token.encode("utf-8")).hexdigest()
+    salt, password_hash = hash_password(payload.password)
+    teacher_id, session_token = str(uuid.uuid4()), new_session_token()
+    with db() as con:
+        invite = con.execute("SELECT school_id,email,expires_at,used_at FROM school_teacher_invites WHERE token_hash=?", (digest,)).fetchone()
+        if not invite or invite["used_at"] or invite["expires_at"] <= int(time.time()) or invite["email"] != email:
+            raise HTTPException(400, "Invitation is invalid, expired, already used, or belongs to another email")
+        try:
+            con.execute("INSERT INTO users(id,email,display_name,role,password_salt,password_hash) VALUES(?,?,?,'teacher',?,?)",
+                        (teacher_id, email, payload.display_name.strip(), salt, password_hash))
+            con.execute("INSERT INTO school_teachers(school_id,teacher_id) VALUES(?,?)", (invite["school_id"], teacher_id))
+            con.execute("UPDATE school_teacher_invites SET used_at=CURRENT_TIMESTAMP WHERE token_hash=? AND used_at IS NULL", (digest,))
+            con.execute("INSERT INTO auth_sessions(token_hash,user_id,expires_at) VALUES(?,?,?)",
+                        (token_digest(session_token), teacher_id, int(time.time()) + 604800))
+        except sqlite3.IntegrityError as exc:
+            raise HTTPException(409, "This email is already registered or the teacher is linked elsewhere") from exc
+    response.set_cookie("pupil_session", session_token, httponly=True, samesite="strict", max_age=604800, path="/")
+    return {"user": {"id": teacher_id, "email": email, "display_name": payload.display_name.strip(), "role": "teacher"}}
+
+
+@app.delete("/api/school-admin/teachers/{teacher_id}")
+def unlink_school_teacher(teacher_id: str, admin: dict[str, Any] = Depends(current_school_admin)) -> dict[str, bool]:
+    with db() as con:
+        school = con.execute("SELECT school_id FROM school_admin_accounts WHERE id=?", (admin["id"],)).fetchone()
+        linked = con.execute("SELECT 1 FROM school_teachers WHERE school_id=? AND teacher_id=?", (school["school_id"], teacher_id)).fetchone()
+        if not linked:
+            raise HTTPException(404, "Teacher not found in this school")
+        con.execute("DELETE FROM school_classes WHERE school_id=? AND class_id IN (SELECT id FROM classes WHERE teacher_id=?)",
+                    (school["school_id"], teacher_id))
+        con.execute("DELETE FROM school_teachers WHERE school_id=? AND teacher_id=?", (school["school_id"], teacher_id))
+    return {"unlinked": True}
 
 
 @app.post("/api/school-admin/teachers", status_code=201)
