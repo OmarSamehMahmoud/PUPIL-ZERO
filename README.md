@@ -1,5 +1,7 @@
 # PUPIL ZERO
 
+**Prototype version: 0.3.0**
+
 **Teach an AI. Discover what you really know.**
 
 PUPIL ZERO is an Arabic-first, learning-by-teaching prototype. A learner explains a topic to an AI classmate, receives curious follow-up questions, and can review a formative evidence report. A teacher can inspect locally stored sessions through a simple dashboard.
