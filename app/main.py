@@ -236,7 +236,7 @@ def teacher_session_detail(session_id: str) -> dict[str, Any]:
 
 @app.get("/api/health")
 def health() -> dict[str, Any]:
-    return {"status": "ok", "product": "PUPIL ZERO", "version": "0.5.0", **public_status()}
+    return {"status": "ok", "product": "PUPIL ZERO", "version": "0.6.0", **public_status()}
 
 
 @app.get("/api/lessons")
