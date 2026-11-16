@@ -1,6 +1,6 @@
 # PUPIL ZERO
 
-**Prototype version: 1.6.0**
+**Prototype version: 1.7.0**
 
 **Teach an AI. Discover what you really know.**
 
@@ -18,7 +18,7 @@ PUPIL ZERO is an Arabic-first, learning-by-teaching prototype. A learner explain
 - Student progress endpoint summarizing their own sessions, lessons visited, and longitudinal concept keyword signals; optional class filter is restricted to their memberships.
 - Teacher class progress dashboard with per-student session counts, lessons visited, and evidence-signal summaries; individual progress is available only when the student belongs to a class owned by that teacher.
 - Parent accounts can only be created from a teacher-issued, single-use guardian invitation tied to a specific student and class; invitations expire after seven days.
-- School workspaces: a school administrator can create a school account, invite a teacher by email with a single-use seven-day registration token, link an existing teacher account, and view school-scoped teacher/class/enrollment counts. Existing classes are included when an existing teacher is linked; future classes created by an invited/linked teacher are automatically included. Admins can unlink a teacher from the school without deleting the teacher account or their classes.
+- School academic management: school administrators can define departments, grade levels, and subjects, attach a grade level to a school class, and assign a linked teacher to teach a subject in a class. These are school-scoped administrative records and do not transfer class ownership or imply student mastery.\n- School workspaces: a school administrator can create a school account, invite a teacher by email with a single-use seven-day registration token, link an existing teacher account, and view school-scoped teacher/class/enrollment counts. Existing classes are included when an existing teacher is linked; future classes created by an invited/linked teacher are automatically included. Admins can unlink a teacher from the school without deleting the teacher account or their classes.
 - Parent portal is restricted to the linked student/class pair and shows aggregate activity, lesson IDs, assignment submission status, and a downloadable PDF report. It does not expose chat transcripts.
 - Arabic account portal at `/account`.
 - Arabic RTL student experience, responsive layout, text chat, and optional browser speech input/output.
@@ -119,7 +119,7 @@ Tests are committed and a GitHub Actions workflow runs them on pushes and pull r
 - `POST /api/teacher/students/{student_id}/guardian-invite?class_id=...` — create a single-use, seven-day guardian invitation for a student in a class owned by the teacher.
 - `POST /api/auth/register-parent` — create a parent account using a valid guardian invitation.
 - `POST /api/auth/register-school-admin` — create a school workspace and its administrator account. JSON: `{"school_name":"North School","email":"admin@example.test","password":"at-least-10-characters","display_name":"School Admin"}`.
-- `POST /api/school-admin/teacher-invites` — generate a single-use, seven-day teacher registration invitation for an email address.
+- `POST /api/school-admin/departments` — create a department in the current school.\n- `POST /api/school-admin/grade-levels?sort_order=0` — create a school grade/stage label and ordering.\n- `POST /api/school-admin/subjects` — create a subject, optionally linked to a department.\n- `POST /api/school-admin/class-grades` — assign a grade level to a class already linked to the school.\n- `POST /api/school-admin/teaching-assignments` — assign a linked teacher to a subject in a school class; repeated assignment updates the teacher.\n- `GET /api/school-admin/teacher-invites` — generate a single-use, seven-day teacher registration invitation for an email address.
 - `POST /api/auth/register-invited-teacher` — create a teacher account using a valid school invitation; the email must match the invitation.
 - `POST /api/school-admin/teachers` — link an existing teacher account by email and include that teacher's existing classes in the school overview.
 - `DELETE /api/school-admin/teachers/{teacher_id}` — unlink a teacher and remove their classes from the school's overview; teacher account and class records remain intact.
