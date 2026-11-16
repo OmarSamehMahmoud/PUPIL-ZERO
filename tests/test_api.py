@@ -24,9 +24,6 @@ def test_student_and_teacher_flow_uses_local_database(tmp_path, monkeypatch):
         assert journey.json()["timeline"][0]["session_id"] == session_id
         assert client.get("/api/learner/journey/not-a-uuid").status_code == 422
 
-        second = client.post("/api/sessions", json={"lesson_id": "fractions", "persona": "milo", "learner_id": learner_id})
-        assert second.status_code == 200
-        assert client.get(f"/api/learner/journey/{learner_id}").json()["session_count"] == 2
 
         rejected = client.post("/api/sessions", json={"lesson_id": "decimals", "persona": "unknown"})
         assert rejected.status_code == 422
@@ -67,6 +64,12 @@ def test_student_and_teacher_flow_uses_local_database(tmp_path, monkeypatch):
 
         unknown_priorities = client.get("/api/teacher/priorities?lesson_id=unknown")
         assert unknown_priorities.status_code == 404
+
+        second = client.post("/api/sessions", json={"lesson_id": "fractions", "persona": "milo", "learner_id": learner_id})
+        assert second.status_code == 200
+        updated_journey = client.get(f"/api/learner/journey/{learner_id}")
+        assert updated_journey.json()["session_count"] == 2
+        assert {item["lesson_id"] for item in updated_journey.json()["timeline"]} == {"decimals", "fractions"}
 
         assert client.get("/teacher").status_code == 200
 
