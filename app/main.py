@@ -300,11 +300,13 @@ def teacher_assignments(class_id: str | None = Query(default=None), teacher: dic
         assignments = con.execute(query, tuple(params)).fetchall()
         results = []
         for assignment in assignments:
-            submissions = con.execute("""SELECT u.id AS student_id,u.display_name,s.session_id,s.submitted_at
-                FROM assignment_submissions s JOIN users u ON u.id=s.student_id
-                WHERE s.assignment_id=? ORDER BY s.submitted_at DESC""", (assignment["id"],)).fetchall()
-            results.append({**dict(assignment), "submitted_count": len(submissions),
-                            "submissions": [dict(item) for item in submissions]})
+            submissions = con.execute("""SELECT u.id AS student_id,u.display_name,s.session_id,s.submitted_at,
+                CASE WHEN s.student_id IS NULL THEN 0 ELSE 1 END AS submitted
+                FROM class_members m JOIN users u ON u.id=m.student_id
+                LEFT JOIN assignment_submissions s ON s.assignment_id=? AND s.student_id=u.id
+                WHERE m.class_id=? ORDER BY u.display_name""", (assignment["id"], assignment["class_id"])).fetchall()
+            results.append({**dict(assignment), "submitted_count": sum(item["submitted"] for item in submissions),
+                            "students": [dict(item) for item in submissions]})
     return {"assignments": results}
 
 @app.get("/api/student/assignments")
