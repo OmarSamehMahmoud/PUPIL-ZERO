@@ -49,7 +49,7 @@ def public_status() -> dict[str, Any]:
     }
 
 
-def build_system_prompt(lesson: dict[str, Any], persona: str) -> str:
+def build_system_prompt(lesson: dict[str, Any], persona: str = "milo") -> str:
     concepts = "\n".join(
         f"- {item['label_ar']}: {item['misconception']}"
         for item in lesson.get("concepts", [])
@@ -65,6 +65,14 @@ def build_system_prompt(lesson: dict[str, Any], persona: str) -> str:
     )
 
 
+def _history_messages(transcript: list[dict[str, str]], system_prompt: str) -> list[dict[str, str]]:
+    history = [{"role": "system", "content": system_prompt}]
+    for item in transcript[-14:]:
+        role = "assistant" if item.get("role") == "ai" else "user"
+        history.append({"role": role, "content": item.get("text", "")})
+    return history
+
+
 async def generate_reply(
     messages: list[dict[str, str]], lesson: dict[str, Any], persona: str
 ) -> str:
@@ -77,10 +85,7 @@ async def generate_reply(
     if not cfg["model"]:
         raise RuntimeError("Set PUPIL_LLM_MODEL before starting a live AI session")
 
-    chat_messages = [{"role": "system", "content": build_system_prompt(lesson, persona)}]
-    for item in messages[-14:]:
-        role = "assistant" if item["role"] == "ai" else "user"
-        chat_messages.append({"role": role, "content": item["text"]})
+    chat_messages = _history_messages(messages, build_system_prompt(lesson, persona))
 
     timeout = httpx.Timeout(60.0, connect=5.0)
     async with httpx.AsyncClient(timeout=timeout) as client:
