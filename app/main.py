@@ -8,6 +8,7 @@ import io
 import uuid
 import time
 from pathlib import Path
+from datetime import date
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query, Request, Response, Depends
@@ -27,7 +28,7 @@ from app.teacher_intelligence import build_review_priorities
 
 ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = ROOT / "pupil_zero.db"
-app = FastAPI(title="PUPIL ZERO", version="1.7.0", description="Local-first learning-by-teaching MVP")
+app = FastAPI(title="PUPIL ZERO", version="1.8.0", description="Local-first learning-by-teaching MVP")
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
 
@@ -107,6 +108,25 @@ class SchoolTeachingAssignmentRequest(BaseModel):
     class_id: str = Field(min_length=1, max_length=64)
     subject_id: str = Field(min_length=1, max_length=64)
     teacher_id: str = Field(min_length=1, max_length=64)
+
+class SchoolTimetableRequest(BaseModel):
+    teaching_assignment_id: str = Field(min_length=1, max_length=64)
+    day_of_week: int = Field(ge=0, le=6)
+    start_time: str = Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    end_time: str = Field(pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+
+class SchoolAttendanceRequest(BaseModel):
+    class_id: str = Field(min_length=1, max_length=64)
+    student_id: str = Field(min_length=1, max_length=64)
+    attendance_date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    status: str = Field(pattern=r"^(present|absent|late|excused)$")
+
+class SchoolLessonRecordRequest(BaseModel):
+    timetable_id: str = Field(min_length=1, max_length=64)
+    lesson_date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
+    status: str = Field(pattern=r"^(completed|cancelled|missed)$")
+    topic: str = Field(default="", max_length=160)
+    notes: str = Field(default="", max_length=1000)
 
 class InvitedTeacherRegisterRequest(BaseModel):
     invite_token: str = Field(min_length=30, max_length=200)
@@ -239,6 +259,34 @@ def init_db() -> None:
             teacher_id TEXT NOT NULL REFERENCES users(id),
             assigned_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(school_id, class_id, subject_id)
+        )""")
+        con.execute("""CREATE TABLE IF NOT EXISTS school_timetable (
+            id TEXT PRIMARY KEY, school_id TEXT NOT NULL REFERENCES schools(id),
+            teaching_assignment_id TEXT NOT NULL REFERENCES school_teaching_assignments(id),
+            day_of_week INTEGER NOT NULL CHECK(day_of_week BETWEEN 0 AND 6),
+            start_time TEXT NOT NULL, end_time TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            CHECK(start_time < end_time)
+        )""")
+        con.execute("""CREATE TABLE IF NOT EXISTS school_attendance (
+            school_id TEXT NOT NULL REFERENCES schools(id),
+            class_id TEXT NOT NULL REFERENCES classes(id),
+            student_id TEXT NOT NULL REFERENCES users(id),
+            attendance_date TEXT NOT NULL,
+            status TEXT NOT NULL CHECK(status IN ('present','absent','late','excused')),
+            marked_by TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY(school_id,class_id,student_id,attendance_date)
+        )""")
+        con.execute("""CREATE TABLE IF NOT EXISTS school_lesson_records (
+            id TEXT PRIMARY KEY, school_id TEXT NOT NULL REFERENCES schools(id),
+            timetable_id TEXT NOT NULL REFERENCES school_timetable(id),
+            lesson_date TEXT NOT NULL,
+            status TEXT NOT NULL CHECK(status IN ('completed','cancelled','missed')),
+            topic TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '',
+            recorded_by TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(school_id,timetable_id,lesson_date)
         )""")
         con.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_school_teachers_single_school ON school_teachers(teacher_id)")
         con.execute("""CREATE TABLE IF NOT EXISTS school_teacher_invites (
@@ -595,11 +643,18 @@ def school_admin_overview(admin: dict[str, Any] = Depends(current_school_admin))
             FROM school_teaching_assignments a JOIN classes c ON c.id=a.class_id
             JOIN school_subjects s ON s.id=a.subject_id JOIN users u ON u.id=a.teacher_id
             WHERE a.school_id=? ORDER BY c.name,s.name""", (school["id"],)).fetchall()
+        timetable = con.execute("""SELECT t.id,t.day_of_week,t.start_time,t.end_time,a.id AS teaching_assignment_id,
+            a.class_id,a.subject_id,a.teacher_id,c.name AS class_name,s.name AS subject_name,u.display_name AS teacher_name
+            FROM school_timetable t JOIN school_teaching_assignments a ON a.id=t.teaching_assignment_id
+            JOIN classes c ON c.id=a.class_id JOIN school_subjects s ON s.id=a.subject_id
+            JOIN users u ON u.id=a.teacher_id WHERE t.school_id=? ORDER BY t.day_of_week,t.start_time""",
+            (school["id"],)).fetchall()
     return {"school": dict(school), "teacher_count": len(teachers), "class_count": len(classes),
             "student_enrollments": sum(row["student_count"] for row in classes),
             "teachers": [dict(row) for row in teachers], "classes": [dict(row) for row in classes],
             "departments": [dict(row) for row in departments], "grade_levels": [dict(row) for row in grade_levels],
             "subjects": [dict(row) for row in subjects], "teaching_assignments": [dict(row) for row in teaching_assignments],
+            "timetable": [dict(row) for row in timetable],
             "notice": "Operational counts only; academic assignments are administrative records, not evidence of student mastery."}
 
 
@@ -688,6 +743,127 @@ def school_admin_assign_subject_teacher(payload: SchoolTeachingAssignmentRequest
             WHERE a.school_id=? AND a.class_id=? AND a.subject_id=?""",
                           (sid, payload.class_id, payload.subject_id)).fetchone()
     return {"assignment": dict(row)}
+
+
+@app.post("/api/school-admin/timetable", status_code=201)
+def school_admin_create_timetable(payload: SchoolTimetableRequest,
+                                  admin: dict[str, Any] = Depends(current_school_admin)) -> dict[str, Any]:
+    if payload.start_time >= payload.end_time:
+        raise HTTPException(422, "End time must be later than start time")
+    slot_id = str(uuid.uuid4())
+    with db() as con:
+        school = con.execute("SELECT school_id FROM school_admin_accounts WHERE id=?", (admin["id"],)).fetchone()
+        assignment = con.execute("SELECT id,class_id,teacher_id FROM school_teaching_assignments WHERE id=? AND school_id=?",
+                                 (payload.teaching_assignment_id, school["school_id"])).fetchone()
+        if not assignment:
+            raise HTTPException(404, "Teaching assignment not found in this school")
+        conflict = con.execute("""SELECT t.id FROM school_timetable t
+            JOIN school_teaching_assignments a ON a.id=t.teaching_assignment_id
+            WHERE t.school_id=? AND t.day_of_week=? AND t.start_time < ? AND t.end_time > ?
+            AND (a.teacher_id=? OR a.class_id=?) LIMIT 1""",
+            (school["school_id"], payload.day_of_week, payload.end_time, payload.start_time,
+             assignment["teacher_id"], assignment["class_id"])).fetchone()
+        if conflict:
+            raise HTTPException(409, "Timetable conflict: this teacher or class already has a lesson in that time range")
+        con.execute("INSERT INTO school_timetable(id,school_id,teaching_assignment_id,day_of_week,start_time,end_time) VALUES(?,?,?,?,?,?)",
+                    (slot_id, school["school_id"], assignment["id"], payload.day_of_week, payload.start_time, payload.end_time))
+        row = con.execute("""SELECT t.id,t.day_of_week,t.start_time,t.end_time,c.name AS class_name,
+            s.name AS subject_name,u.display_name AS teacher_name
+            FROM school_timetable t JOIN school_teaching_assignments a ON a.id=t.teaching_assignment_id
+            JOIN classes c ON c.id=a.class_id JOIN school_subjects s ON s.id=a.subject_id
+            JOIN users u ON u.id=a.teacher_id WHERE t.id=?""", (slot_id,)).fetchone()
+    return {"slot": dict(row)}
+
+
+@app.get("/api/school-admin/classes/{class_id}/students")
+def school_admin_class_students(class_id: str, admin: dict[str, Any] = Depends(current_school_admin)) -> dict[str, Any]:
+    with db() as con:
+        school = con.execute("SELECT school_id FROM school_admin_accounts WHERE id=?", (admin["id"],)).fetchone()
+        if not con.execute("SELECT 1 FROM school_classes WHERE school_id=? AND class_id=?",
+                           (school["school_id"], class_id)).fetchone():
+            raise HTTPException(404, "Class not found in this school")
+        rows = con.execute("SELECT u.id,u.display_name FROM class_members m JOIN users u ON u.id=m.student_id WHERE m.class_id=? ORDER BY u.display_name",
+                           (class_id,)).fetchall()
+    return {"students": [dict(row) for row in rows]}
+
+
+@app.post("/api/school-admin/attendance", status_code=201)
+def school_admin_mark_attendance(payload: SchoolAttendanceRequest,
+                                 admin: dict[str, Any] = Depends(current_school_admin)) -> dict[str, Any]:
+    try:
+        date.fromisoformat(payload.attendance_date)
+    except ValueError as exc:
+        raise HTTPException(422, "Invalid attendance date") from exc
+    with db() as con:
+        school = con.execute("SELECT school_id FROM school_admin_accounts WHERE id=?", (admin["id"],)).fetchone()
+        sid = school["school_id"]
+        if not con.execute("SELECT 1 FROM school_classes WHERE school_id=? AND class_id=?", (sid, payload.class_id)).fetchone():
+            raise HTTPException(404, "Class not found in this school")
+        if not con.execute("SELECT 1 FROM class_members WHERE class_id=? AND student_id=?",
+                           (payload.class_id, payload.student_id)).fetchone():
+            raise HTTPException(404, "Student is not enrolled in this class")
+        con.execute("""INSERT INTO school_attendance(school_id,class_id,student_id,attendance_date,status,marked_by)
+            VALUES(?,?,?,?,?,?) ON CONFLICT(school_id,class_id,student_id,attendance_date)
+            DO UPDATE SET status=excluded.status,marked_by=excluded.marked_by,updated_at=CURRENT_TIMESTAMP""",
+            (sid, payload.class_id, payload.student_id, payload.attendance_date, payload.status, admin["id"]))
+    return {"saved": True, "class_id": payload.class_id, "student_id": payload.student_id,
+            "attendance_date": payload.attendance_date, "status": payload.status}
+
+
+@app.post("/api/school-admin/lesson-records", status_code=201)
+def school_admin_record_lesson(payload: SchoolLessonRecordRequest,
+                               admin: dict[str, Any] = Depends(current_school_admin)) -> dict[str, Any]:
+    try:
+        date.fromisoformat(payload.lesson_date)
+    except ValueError as exc:
+        raise HTTPException(422, "Invalid lesson date") from exc
+    record_id = str(uuid.uuid4())
+    with db() as con:
+        school = con.execute("SELECT school_id FROM school_admin_accounts WHERE id=?", (admin["id"],)).fetchone()
+        sid = school["school_id"]
+        if not con.execute("SELECT 1 FROM school_timetable WHERE id=? AND school_id=?",
+                           (payload.timetable_id, sid)).fetchone():
+            raise HTTPException(404, "Timetable slot not found in this school")
+        con.execute("""INSERT INTO school_lesson_records(id,school_id,timetable_id,lesson_date,status,topic,notes,recorded_by)
+            VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(school_id,timetable_id,lesson_date) DO UPDATE SET
+            status=excluded.status,topic=excluded.topic,notes=excluded.notes,recorded_by=excluded.recorded_by""",
+            (record_id, sid, payload.timetable_id, payload.lesson_date, payload.status,
+             payload.topic.strip(), payload.notes.strip(), admin["id"]))
+        row = con.execute("""SELECT r.id,r.lesson_date,r.status,r.topic,r.notes,c.name AS class_name,
+            s.name AS subject_name,u.display_name AS teacher_name
+            FROM school_lesson_records r JOIN school_timetable t ON t.id=r.timetable_id
+            JOIN school_teaching_assignments a ON a.id=t.teaching_assignment_id
+            JOIN classes c ON c.id=a.class_id JOIN school_subjects s ON s.id=a.subject_id
+            JOIN users u ON u.id=a.teacher_id WHERE r.school_id=? AND r.timetable_id=? AND r.lesson_date=?""",
+            (sid, payload.timetable_id, payload.lesson_date)).fetchone()
+    return {"record": dict(row)}
+
+
+@app.get("/api/school-admin/operations-report")
+def school_admin_operations_report(date_from: str = Query(..., pattern=r"^\\d{4}-\\d{2}-\\d{2}$"),
+                                   date_to: str = Query(..., pattern=r"^\\d{4}-\\d{2}-\\d{2}$"),
+                                   admin: dict[str, Any] = Depends(current_school_admin)) -> dict[str, Any]:
+    try:
+        date.fromisoformat(date_from)
+        date.fromisoformat(date_to)
+    except ValueError as exc:
+        raise HTTPException(422, "Invalid report date") from exc
+    if date_from > date_to:
+        raise HTTPException(422, "date_from must not be after date_to")
+    with db() as con:
+        school = con.execute("SELECT school_id FROM school_admin_accounts WHERE id=?", (admin["id"],)).fetchone()
+        sid = school["school_id"]
+        attendance = con.execute("SELECT status,COUNT(*) AS count FROM school_attendance WHERE school_id=? AND attendance_date BETWEEN ? AND ? GROUP BY status",
+                                 (sid, date_from, date_to)).fetchall()
+        lessons = con.execute("SELECT status,COUNT(*) AS count FROM school_lesson_records WHERE school_id=? AND lesson_date BETWEEN ? AND ? GROUP BY status",
+                              (sid, date_from, date_to)).fetchall()
+        daily = con.execute("SELECT attendance_date AS day,status,COUNT(*) AS count FROM school_attendance WHERE school_id=? AND attendance_date BETWEEN ? AND ? GROUP BY attendance_date,status ORDER BY attendance_date",
+                            (sid, date_from, date_to)).fetchall()
+    return {"date_from": date_from, "date_to": date_to,
+            "attendance": {row["status"]: row["count"] for row in attendance},
+            "lessons": {row["status"]: row["count"] for row in lessons},
+            "daily_attendance": [dict(row) for row in daily],
+            "notice": "Operational records only. Attendance and lesson delivery counts do not measure learning or mastery."}
 
 
 @app.post("/api/teacher/students/{student_id}/guardian-invite", status_code=201)
