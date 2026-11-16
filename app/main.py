@@ -476,6 +476,8 @@ def register_invited_teacher(payload: InvitedTeacherRegisterRequest, response: R
         invite = con.execute("SELECT school_id,email,expires_at,used_at FROM school_teacher_invites WHERE token_hash=?", (digest,)).fetchone()
         if not invite or invite["used_at"] or invite["expires_at"] <= int(time.time()) or invite["email"] != email:
             raise HTTPException(400, "Invitation is invalid, expired, already used, or belongs to another email")
+        if con.execute("SELECT 1 FROM (SELECT email FROM users UNION ALL SELECT email FROM parent_accounts UNION ALL SELECT email FROM school_admin_accounts) WHERE email=?", (email,)).fetchone():
+            raise HTTPException(409, "This email already has an account")
         try:
             con.execute("INSERT INTO users(id,email,display_name,role,password_salt,password_hash) VALUES(?,?,?,'teacher',?,?)",
                         (teacher_id, email, payload.display_name.strip(), salt, password_hash))
