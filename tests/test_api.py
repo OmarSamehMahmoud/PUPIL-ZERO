@@ -75,6 +75,31 @@ def test_student_and_teacher_flow_uses_local_database(tmp_path, monkeypatch):
         assert plan.status_code == 200
         assert plan.json()["teacher_decision_required"] is True
         assert len(plan.json()["steps"]) == 4
+        assert plan.json()["feedback_summary"]["total"] == 0
+        saved = client.post("/api/teacher/interventions/feedback", json={
+            "lesson_id": "decimals", "concept_id": "decimal_comparison",
+            "rating": "helpful", "note": "واضحة ومناسبة"
+        })
+        assert saved.status_code == 201
+        assert saved.json()["saved"] is True
+        for rating in ("partly_helpful", "not_helpful"):
+            response = client.post("/api/teacher/interventions/feedback", json={
+                "lesson_id": "decimals", "concept_id": "decimal_comparison", "rating": rating
+            })
+            assert response.status_code == 201
+        summary = client.get("/api/teacher/interventions/feedback?lesson_id=decimals&concept_id=decimal_comparison")
+        assert summary.status_code == 200
+        assert summary.json()["total"] == 3
+        assert summary.json()["helpful"] == 1
+        assert "وصفي" in summary.json()["sample_notice"]
+        assert "note" not in summary.json()
+        assert client.post("/api/teacher/interventions/feedback", json={
+            "lesson_id": "decimals", "concept_id": "decimal_comparison", "rating": "invalid"
+        }).status_code == 422
+        assert client.post("/api/teacher/interventions/feedback", json={
+            "lesson_id": "unknown", "concept_id": "x", "rating": "helpful"
+        }).status_code == 404
+        assert client.get("/api/teacher/interventions/feedback?lesson_id=unknown&concept_id=x").status_code == 404
         assert client.get("/api/teacher/interventions?lesson_id=decimals&concept_id=missing").status_code == 404
         assert client.get("/api/teacher/interventions?lesson_id=missing&concept_id=x").status_code == 404
         assert client.get("/teacher").status_code == 200
