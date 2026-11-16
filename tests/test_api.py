@@ -502,3 +502,58 @@ def test_school_teacher_invite_registration_and_unlink_scope(tmp_path, monkeypat
         assert invited_teacher.get("/api/classes").status_code == 200
         assert invited_teacher.get(f"/api/classes/{classroom.json()['id']}/members").status_code == 200
         assert admin.delete(f"/api/school-admin/teachers/{teacher_id}").status_code == 404
+
+
+
+def test_school_academic_structure_and_assignment_scope(tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "DB_PATH", tmp_path / "school_academics.sqlite3")
+    with TestClient(main.app) as admin, TestClient(main.app) as teacher, TestClient(main.app) as student, TestClient(main.app) as other_admin:
+        assert admin.post("/api/auth/register-school-admin", json={
+            "school_name": "Academic School", "email": "academic-admin@example.test",
+            "password": "SchoolAdmin123!", "display_name": "Academic Admin"
+        }).status_code == 201
+        assert teacher.post("/api/auth/register-teacher", json={
+            "email": "academic-teacher@example.test", "password": "TeacherPass123!", "display_name": "Math Teacher"
+        }).status_code == 201
+        assert admin.post("/api/school-admin/teachers", json={"teacher_email": "academic-teacher@example.test"}).status_code == 201
+        classroom = teacher.post("/api/classes", json={"name": "Grade 5 A", "grade_label": "Primary 5"})
+        assert classroom.status_code == 201
+
+        department = admin.post("/api/school-admin/departments", json={"name": "Mathematics"})
+        grade = admin.post("/api/school-admin/grade-levels?sort_order=5", json={"name": "Primary 5"})
+        subject = admin.post("/api/school-admin/subjects", json={
+            "name": "Fractions", "department_id": department.json()["id"]
+        })
+        assert department.status_code == grade.status_code == subject.status_code == 201
+        assert admin.post("/api/school-admin/class-grades", json={
+            "class_id": classroom.json()["id"], "grade_level_id": grade.json()["id"]
+        }).status_code == 201
+        assigned = admin.post("/api/school-admin/teaching-assignments", json={
+            "class_id": classroom.json()["id"], "subject_id": subject.json()["id"],
+            "teacher_id": admin.get("/api/school-admin/overview").json()["teachers"][0]["id"]
+        })
+        assert assigned.status_code == 201
+        assert assigned.json()["assignment"]["teacher_name"] == "Math Teacher"
+
+        overview = admin.get("/api/school-admin/overview").json()
+        assert overview["departments"][0]["name"] == "Mathematics"
+        assert overview["grade_levels"][0]["name"] == "Primary 5"
+        assert overview["classes"][0]["academic_grade"] == "Primary 5"
+        assert overview["teaching_assignments"][0]["subject_name"] == "Fractions"
+
+        assert student.get("/api/school-admin/overview").status_code == 401
+        assert other_admin.post("/api/auth/register-school-admin", json={
+            "school_name": "Other Academic School", "email": "other-academic-admin@example.test",
+            "password": "SchoolAdmin456!", "display_name": "Other Admin"
+        }).status_code == 201
+        assert other_admin.post("/api/school-admin/subjects", json={
+            "name": "Foreign subject", "department_id": department.json()["id"]
+        }).status_code == 404
+        assert other_admin.post("/api/school-admin/class-grades", json={
+            "class_id": classroom.json()["id"], "grade_level_id": grade.json()["id"]
+        }).status_code == 404
+        assert other_admin.post("/api/school-admin/teaching-assignments", json={
+            "class_id": classroom.json()["id"], "subject_id": subject.json()["id"],
+            "teacher_id": overview["teachers"][0]["id"]
+        }).status_code == 404
+        assert admin.post("/api/school-admin/departments", json={"name": "Mathematics"}).status_code == 409
