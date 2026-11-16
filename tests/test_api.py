@@ -325,3 +325,81 @@ def test_student_progress_and_teacher_class_analytics_are_scoped(tmp_path, monke
         })
         assert other_join.status_code == 201
         assert student.get("/api/student/progress?class_id=" + other_class.json()["id"]).status_code == 404
+
+
+def test_guardian_invite_parent_portal_and_pdf_are_scoped(tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "DB_PATH", tmp_path / "parents.sqlite3")
+    with TestClient(main.app) as teacher, TestClient(main.app) as student, TestClient(main.app) as parent, TestClient(main.app) as other_parent, TestClient(main.app) as other_teacher:
+        assert teacher.post("/api/auth/register-teacher", json={
+            "email": "guardian-teacher@example.test", "password": "TeacherPass123!", "display_name": "Class Teacher"
+        }).status_code == 201
+        classroom = teacher.post("/api/classes", json={"name": "Guardian Class"})
+        assert classroom.status_code == 201
+        joined = student.post("/api/classes/join", json={
+            "join_code": classroom.json()["join_code"], "display_name": "Learner One",
+            "email": "guardian-student@example.test", "password": "StudentPass123!"
+        })
+        assert joined.status_code == 201
+        student_id = joined.json()["student"]["id"]
+        started = student.post("/api/sessions", json={
+            "lesson_id": "fractions", "persona": "milo", "class_id": classroom.json()["id"]
+        })
+        assert started.status_code == 200
+        assert student.post("/api/message", json={
+            "session_id": started.json()["session_id"], "text": "النصف جزء من جزأين متساويين"
+        }).status_code == 200
+
+        invite = teacher.post(
+            f"/api/teacher/students/{student_id}/guardian-invite?class_id={classroom.json()['id']}"
+        )
+        assert invite.status_code == 201
+        token = invite.json()["invite_token"]
+        assert len(token) >= 30
+        assert other_teacher.post("/api/auth/register-teacher", json={
+            "email": "guardian-other-teacher@example.test", "password": "TeacherPass123!", "display_name": "Other Teacher"
+        }).status_code == 201
+        assert other_teacher.post(
+            f"/api/teacher/students/{student_id}/guardian-invite?class_id={classroom.json()['id']}"
+        ).status_code == 404
+
+        registration = parent.post("/api/auth/register-parent", json={
+            "invite_token": token, "email": "guardian-parent@example.test",
+            "password": "ParentPass123!", "display_name": "Parent One"
+        })
+        assert registration.status_code == 201
+        assert registration.json()["user"]["role"] == "parent"
+        assert parent.get("/api/auth/me").json()["user"]["role"] == "parent"
+        assert parent.get("/api/parent/students").json()["students"][0]["student_id"] == student_id
+
+        progress = parent.get(
+            f"/api/parent/students/{student_id}/progress?class_id={classroom.json()['id']}"
+        )
+        assert progress.status_code == 200
+        assert progress.json()["session_count"] == 1
+        assert progress.json()["assignments"] == []
+        assert parent.get(
+            "/api/parent/students/" + "12345678-1234-4234-8234-123456789abc" +
+            "?class_id=" + classroom.json()["id"]
+        ).status_code == 404
+
+        pdf = parent.get(
+            f"/api/parent/students/{student_id}/report.pdf?class_id={classroom.json()['id']}"
+        )
+        assert pdf.status_code == 200
+        assert pdf.headers["content-type"] == "application/pdf"
+        assert pdf.content.startswith(b"%PDF")
+
+        assert other_parent.post("/api/auth/login", json={
+            "email": "guardian-parent@example.test", "password": "ParentPass123!"
+        }).status_code == 200
+        assert other_parent.get("/api/parent/students").json()["students"][0]["student_id"] == student_id
+        assert other_parent.post("/api/auth/logout").status_code == 200
+        assert other_parent.get("/api/parent/students").status_code == 401
+
+        reused = other_parent.post("/api/auth/register-parent", json={
+            "invite_token": token, "email": "second-parent@example.test",
+            "password": "ParentPass123!", "display_name": "Second Parent"
+        })
+        assert reused.status_code == 400
+        assert student.get("/api/parent/students").status_code == 401
+        assert teacher.get("/api/parent/students").status_code == 401
