@@ -13,7 +13,7 @@ async function refreshAccount(){try{const r=await fetch('/api/auth/me');if(!r.ok
 document.getElementById('registerForm').onsubmit=async e=>{e.preventDefault();try{const d=await send('/api/auth/register-teacher',formData(e.target));statusEl.textContent='تم إنشاء حساب المدرّس: '+d.user.display_name;await refreshAccount()}catch(x){statusEl.textContent=x.message}};
 document.getElementById('loginForm').onsubmit=async e=>{e.preventDefault();try{const d=await send('/api/auth/login',formData(e.target));statusEl.textContent='مرحبًا '+d.user.display_name+' · '+d.user.role;await refreshAccount()}catch(x){statusEl.textContent=x.message}};
 document.getElementById('classForm').onsubmit=async e=>{e.preventDefault();try{const d=await send('/api/classes',formData(e.target));statusEl.textContent='تم إنشاء الفصل. كود الانضمام: '+d.join_code;e.target.reset();await refreshAccount()}catch(x){statusEl.textContent=x.message}};
-document.getElementById('joinForm').onsubmit=async e=>{e.preventDefault();try{const d=await send('/api/classes/join',formData(e.target));statusEl.textContent='تم إنشاء حساب الطالب والانضمام إلى فصل '+d.class.name+'. سجّل الدخول لاحقًا عند تفعيل بوابة الطالب.'}catch(x){statusEl.textContent=x.message}};
+document.getElementById('joinForm').onsubmit=async e=>{e.preventDefault();try{const d=await send('/api/classes/join',formData(e.target));statusEl.textContent='تم إنشاء حساب الطالب والانضمام إلى فصل '+d.class.name+' وتسجيل الدخول بنجاح. يمكنك الآن العودة لواجهة الطالب.'}catch(x){statusEl.textContent=x.message}};
 document.getElementById('logout').onclick=async()=>{try{await send('/api/auth/logout',{});statusEl.textContent='تم تسجيل الخروج.'}catch(x){statusEl.textContent=x.message}};
 refreshAccount();
 </script></body></html>
