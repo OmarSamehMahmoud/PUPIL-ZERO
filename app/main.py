@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import hashlib
+import secrets
+import io
 import uuid
 import time
 from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query, Request, Response, Depends
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -24,7 +27,7 @@ from app.teacher_intelligence import build_review_priorities
 
 ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = ROOT / "pupil_zero.db"
-app = FastAPI(title="PUPIL ZERO", version="1.3.0", description="Local-first learning-by-teaching MVP")
+app = FastAPI(title="PUPIL ZERO", version="1.4.0", description="Local-first learning-by-teaching MVP")
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
 
@@ -70,6 +73,13 @@ class AssignmentCreateRequest(BaseModel):
     description: str = Field(default="", max_length=1500)
     lesson_id: str = Field(min_length=1, max_length=64)
     due_at: str = Field(default="", max_length=40)
+
+class ParentRegisterRequest(BaseModel):
+    invite_token: str = Field(min_length=30, max_length=200)
+    email: str = Field(min_length=5, max_length=254)
+    password: str = Field(min_length=10, max_length=128)
+    display_name: str = Field(min_length=2, max_length=80)
+
 
 class InterventionFeedbackRequest(BaseModel):
     lesson_id: str
@@ -138,6 +148,21 @@ def init_db() -> None:
             description TEXT NOT NULL DEFAULT '', lesson_id TEXT NOT NULL,
             due_at TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         )""")
+        con.execute("""CREATE TABLE IF NOT EXISTS parent_accounts (
+            id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, display_name TEXT NOT NULL,
+            password_salt TEXT NOT NULL, password_hash TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )""")
+        con.execute("""CREATE TABLE IF NOT EXISTS guardian_invites (
+            token_hash TEXT PRIMARY KEY, student_id TEXT NOT NULL, class_id TEXT NOT NULL,
+            teacher_id TEXT NOT NULL, expires_at INTEGER NOT NULL, used_at TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )""")
+        con.execute("""CREATE TABLE IF NOT EXISTS parent_student_links (
+            parent_id TEXT NOT NULL, student_id TEXT NOT NULL, class_id TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY(parent_id,student_id,class_id)
+        )""")
         con.execute("""CREATE TABLE IF NOT EXISTS assignment_submissions (
             assignment_id TEXT NOT NULL REFERENCES assignments(id),
             student_id TEXT NOT NULL REFERENCES users(id),
@@ -162,7 +187,7 @@ async def teacher_auth_guard(request: Request, call_next):
     if token:
         with db() as con:
             user = con.execute(
-                "SELECT u.id,u.email,u.display_name,u.role FROM auth_sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>?",
+                "SELECT id,email,display_name,role FROM (SELECT u.id,u.email,u.display_name,u.role,s.token_hash,s.expires_at FROM auth_sessions s JOIN users u ON u.id=s.user_id UNION ALL SELECT p.id,p.email,p.display_name,'parent' AS role,s.token_hash,s.expires_at FROM auth_sessions s JOIN parent_accounts p ON p.id=s.user_id) WHERE token_hash=? AND expires_at>?",
                 (token_digest(token), int(time.time())),
             ).fetchone()
     request.state.user = dict(user) if user else None
@@ -172,6 +197,11 @@ async def teacher_auth_guard(request: Request, call_next):
             if path == "/teacher":
                 return HTMLResponse("<!doctype html><html lang=ar dir=rtl><meta charset=utf-8><body><h1>تسجيل دخول المدرّس مطلوب</h1><p><a href=/account>افتح صفحة الحسابات لتسجيل الدخول</a></p></body></html>", status_code=401)
             return JSONResponse({"detail": "Teacher authentication required"}, status_code=401)
+    if path == "/parent" or path.startswith("/api/parent"):
+        if not user or user["role"] != "parent":
+            if path == "/parent":
+                return HTMLResponse((ROOT / "static" / "parent.html").read_text(encoding="utf-8"))
+            return JSONResponse({"detail": "Parent authentication required"}, status_code=401)
     return await call_next(request)
 
 def current_teacher(request: Request) -> dict[str, Any]:
@@ -199,7 +229,9 @@ def register_teacher(payload: TeacherRegisterRequest, response: Response) -> dic
 
 @app.post("/api/auth/login")
 def login(payload: LoginRequest, response: Response) -> dict[str, Any]:
-    with db() as con: user=con.execute("SELECT * FROM users WHERE email=?",(payload.email.strip().lower(),)).fetchone()
+    with db() as con:
+        email = payload.email.strip().lower()
+        user=con.execute("SELECT id,email,display_name,role,password_salt,password_hash FROM users WHERE email=? UNION ALL SELECT id,email,display_name,'parent' AS role,password_salt,password_hash FROM parent_accounts WHERE email=?",(email,email)).fetchone()
     if not user or not verify_password(payload.password,user["password_salt"],user["password_hash"]): raise HTTPException(401,"Invalid email or password")
     token=new_session_token()
     with db() as con: con.execute("INSERT INTO auth_sessions(token_hash,user_id,expires_at) VALUES(?,?,?)",(token_digest(token),user["id"],int(time.time())+604800))
@@ -327,6 +359,120 @@ def student_assignments(class_id: str | None = Query(default=None), student: dic
         rows = con.execute(query, tuple(params)).fetchall()
     return {"assignments": [dict(row) for row in rows]}
 
+
+def current_parent(request: Request) -> dict[str, Any]:
+    user = getattr(request.state, "user", None)
+    if not user or user.get("role") != "parent":
+        raise HTTPException(401, "Parent authentication required")
+    return user
+
+
+@app.post("/api/teacher/students/{student_id}/guardian-invite", status_code=201)
+def create_guardian_invite(student_id: str, class_id: str = Query(...), teacher: dict[str, Any] = Depends(current_teacher)) -> dict[str, Any]:
+    token = secrets.token_urlsafe(32)
+    digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    with db() as con:
+        member = con.execute("SELECT 1 FROM class_members m JOIN classes c ON c.id=m.class_id WHERE m.student_id=? AND m.class_id=? AND c.teacher_id=?", (student_id, class_id, teacher["id"])).fetchone()
+        if not member:
+            raise HTTPException(404, "Student not found in a class owned by this teacher")
+        con.execute("INSERT INTO guardian_invites(token_hash,student_id,class_id,teacher_id,expires_at) VALUES(?,?,?,?,?)", (digest, student_id, class_id, teacher["id"], int(time.time()) + 7 * 86400))
+    return {"invite_token": token, "expires_in_days": 7, "registration_path": "/parent?invite=" + token}
+
+
+@app.post("/api/auth/register-parent", status_code=201)
+def register_parent(payload: ParentRegisterRequest, response: Response) -> dict[str, Any]:
+    email = payload.email.strip().lower()
+    if "@" not in email:
+        raise HTTPException(422, "Enter a valid email address")
+    invite_hash = hashlib.sha256(payload.invite_token.encode("utf-8")).hexdigest()
+    salt, password_hash = hash_password(payload.password)
+    parent_id, token = str(uuid.uuid4()), new_session_token()
+    with db() as con:
+        invite = con.execute("SELECT * FROM guardian_invites WHERE token_hash=? AND used_at IS NULL AND expires_at>?", (invite_hash, int(time.time()))).fetchone()
+        if not invite:
+            raise HTTPException(400, "Invitation is invalid, expired, or already used")
+        try:
+            con.execute("INSERT INTO parent_accounts(id,email,display_name,password_salt,password_hash) VALUES(?,?,?,?,?)", (parent_id,email,payload.display_name.strip(),salt,password_hash))
+        except sqlite3.IntegrityError as exc:
+            raise HTTPException(409, "An account with this email already exists") from exc
+        con.execute("INSERT INTO parent_student_links(parent_id,student_id,class_id) VALUES(?,?,?)", (parent_id,invite["student_id"],invite["class_id"]))
+        con.execute("UPDATE guardian_invites SET used_at=CURRENT_TIMESTAMP WHERE token_hash=?", (invite_hash,))
+        con.execute("INSERT INTO auth_sessions(token_hash,user_id,expires_at) VALUES(?,?,?)", (token_digest(token),parent_id,int(time.time())+604800))
+    response.set_cookie("pupil_session",token,httponly=True,samesite="strict",max_age=604800,path="/")
+    return {"user":{"id":parent_id,"email":email,"display_name":payload.display_name.strip(),"role":"parent"}}
+
+
+def _parent_progress(parent_id: str, student_id: str, class_id: str) -> dict[str, Any]:
+    with db() as con:
+        link = con.execute("""SELECT u.display_name AS student_name,c.name AS class_name,t.display_name AS teacher_name
+            FROM parent_student_links l JOIN users u ON u.id=l.student_id
+            JOIN classes c ON c.id=l.class_id JOIN users t ON t.id=c.teacher_id
+            WHERE l.parent_id=? AND l.student_id=? AND l.class_id=?""", (parent_id,student_id,class_id)).fetchone()
+        if not link:
+            raise HTTPException(404, "Linked student report not found")
+        sessions = con.execute("SELECT id,lesson_id,transcript,created_at FROM sessions WHERE student_id=? AND class_id=? ORDER BY created_at,id", (student_id,class_id)).fetchall()
+        assignments = con.execute("""SELECT a.title,a.lesson_id,a.due_at,
+            CASE WHEN sub.student_id IS NULL THEN 0 ELSE 1 END AS submitted,sub.submitted_at
+            FROM assignments a LEFT JOIN assignment_submissions sub ON sub.assignment_id=a.id AND sub.student_id=?
+            WHERE a.class_id=? ORDER BY a.created_at DESC""", (student_id,class_id)).fetchall()
+    records=[]
+    for row in sessions:
+        lesson=get_lesson(row["lesson_id"])
+        if not lesson: continue
+        try: transcript=json.loads(row["transcript"] or "[]")
+        except (TypeError,json.JSONDecodeError): transcript=[]
+        records.append({"session_id":row["id"],"lesson_id":row["lesson_id"],"lesson":lesson["title_ar"],"created_at":row["created_at"],"report":assess_explanation(transcript if isinstance(transcript,list) else [],lesson)})
+    journey=build_learning_journey(records)
+    return {"student":dict(link),"class_id":class_id,"session_count":journey["session_count"],"lessons":sorted({x["lesson_id"] for x in records}),"concepts":journey["concepts"],"timeline":journey["timeline"],"assignments":[dict(x) for x in assignments],"notice":"تقرير وصفي محدود بالفصل المرتبط. إشارات مطابقة الكلمات ليست درجات أو تشخيصًا أو إثباتًا للإتقان."}
+
+
+@app.get("/api/parent/students")
+def parent_students(parent: dict[str, Any] = Depends(current_parent)) -> dict[str, Any]:
+    with db() as con:
+        rows=con.execute("""SELECT l.student_id,l.class_id,u.display_name AS student_name,c.name AS class_name,t.display_name AS teacher_name
+            FROM parent_student_links l JOIN users u ON u.id=l.student_id JOIN classes c ON c.id=l.class_id
+            JOIN users t ON t.id=c.teacher_id WHERE l.parent_id=? ORDER BY c.name,u.display_name""",(parent["id"],)).fetchall()
+    return {"students":[dict(x) for x in rows]}
+
+
+@app.get("/api/parent/students/{student_id}/progress")
+def parent_student_progress(student_id: str, class_id: str = Query(...), parent: dict[str, Any] = Depends(current_parent)) -> dict[str, Any]:
+    return _parent_progress(parent["id"],student_id,class_id)
+
+
+@app.get("/api/parent/students/{student_id}/report.pdf")
+def parent_student_report_pdf(student_id: str, class_id: str = Query(...), parent: dict[str, Any] = Depends(current_parent)):
+    report=_parent_progress(parent["id"],student_id,class_id)
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.platypus import SimpleDocTemplate,Paragraph,Spacer,Table,TableStyle
+    from reportlab.lib import colors
+    from reportlab.lib.units import mm
+    def safe(value: Any) -> str:
+        return str(value).encode("ascii","replace").decode("ascii").replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
+    buffer=io.BytesIO()
+    doc=SimpleDocTemplate(buffer,pagesize=A4,rightMargin=18*mm,leftMargin=18*mm,topMargin=18*mm,bottomMargin=18*mm)
+    styles=getSampleStyleSheet()
+    story=[Paragraph("PUPIL ZERO - Student Activity Report",styles["Title"]),Spacer(1,8),
+        Paragraph("Student: "+safe(report["student"]["student_name"]),styles["Normal"]),
+        Paragraph("Class: "+safe(report["student"]["class_name"]),styles["Normal"]),
+        Paragraph("Teacher: "+safe(report["student"]["teacher_name"]),styles["Normal"]),
+        Paragraph("Recorded sessions: "+str(report["session_count"]),styles["Normal"]),
+        Paragraph("Lesson IDs: "+(", ".join(safe(x) for x in report["lessons"]) or "None"),styles["Normal"]),
+        Spacer(1,10),Paragraph("Assignments",styles["Heading2"])]
+    data=[["Assignment","Lesson ID","Status"]]+[[safe(a["title"]),safe(a["lesson_id"]),"Submitted" if a["submitted"] else "Pending"] for a in report["assignments"]]
+    if len(data)==1:data.append(["No assignments","-","-"])
+    table=Table(data,repeatRows=1,colWidths=[85*mm,45*mm,35*mm])
+    table.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),colors.HexColor("#24324b")),("TEXTCOLOR",(0,0),(-1,0),colors.white),("GRID",(0,0),(-1,-1),0.4,colors.lightgrey),("PADDING",(0,0),(-1,-1),7)]))
+    story.extend([table,Spacer(1,10),Paragraph("Keyword evidence signals (not grades)",styles["Heading2"])])
+    concepts=[["Concept ID","Sessions with evidence","Sessions observed"]]+[[safe(c["concept_id"]),str(c["sessions_with_evidence"]),str(c["sessions_observed"])] for c in report["concepts"]]
+    if len(concepts)==1:concepts.append(["No evidence yet","-","-"])
+    ct=Table(concepts,repeatRows=1,colWidths=[55*mm,65*mm,45*mm])
+    ct.setStyle(TableStyle([("BACKGROUND",(0,0),(-1,0),colors.HexColor("#24324b")),("TEXTCOLOR",(0,0),(-1,0),colors.white),("GRID",(0,0),(-1,-1),0.4,colors.lightgrey),("PADDING",(0,0),(-1,-1),7)]))
+    story.extend([ct,Spacer(1,10),Paragraph(safe(report["notice"]),styles["Normal"]),Paragraph("Not a grade, diagnosis, or validated measure of learning.",styles["Italic"])])
+    doc.build(story);buffer.seek(0)
+    return StreamingResponse(buffer,media_type="application/pdf",headers={"Content-Disposition":'attachment; filename="pupil-zero-student-report.pdf"'})
+
 @app.get("/account", response_class=HTMLResponse)
 def account_page() -> str:
     return (ROOT / "static" / "account.html").read_text(encoding="utf-8")
@@ -340,6 +486,11 @@ def home() -> str:
 @app.get("/teacher", response_class=HTMLResponse)
 def teacher_home() -> str:
     return (ROOT / "static" / "teacher.html").read_text(encoding="utf-8")
+
+
+@app.get("/parent", response_class=HTMLResponse)
+def parent_home() -> str:
+    return (ROOT / "static" / "parent.html").read_text(encoding="utf-8")
 
 
 @app.get("/api/teacher/sessions")
@@ -682,7 +833,7 @@ def teacher_session_detail(session_id: str, teacher: dict[str,Any] = Depends(cur
 
 @app.get("/api/health")
 def health() -> dict[str, Any]:
-    return {"status": "ok", "product": "PUPIL ZERO", "version": "1.3.0", **public_status()}
+    return {"status": "ok", "product": "PUPIL ZERO", "version": "1.4.0", **public_status()}
 
 
 @app.get("/api/lessons")
