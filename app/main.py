@@ -28,7 +28,7 @@ from app.teacher_intelligence import build_review_priorities
 
 ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = ROOT / "pupil_zero.db"
-app = FastAPI(title="PUPIL ZERO", version="1.8.0", description="Local-first learning-by-teaching MVP")
+app = FastAPI(title="PUPIL ZERO", version="1.9.0", description="Local-first learning-by-teaching MVP")
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
 
@@ -288,6 +288,12 @@ def init_db() -> None:
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(school_id,timetable_id,lesson_date)
         )""")
+        con.execute("""CREATE TABLE IF NOT EXISTS user_notifications (
+            id TEXT PRIMARY KEY, recipient_id TEXT NOT NULL, recipient_role TEXT NOT NULL,
+            kind TEXT NOT NULL, title TEXT NOT NULL, body TEXT NOT NULL,
+            read_at TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )""")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_user_notifications_recipient ON user_notifications(recipient_role,recipient_id,created_at)")
         con.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_school_teachers_single_school ON school_teachers(teacher_id)")
         con.execute("""CREATE TABLE IF NOT EXISTS school_teacher_invites (
             token_hash TEXT PRIMARY KEY, school_id TEXT NOT NULL REFERENCES schools(id),
@@ -333,6 +339,11 @@ async def teacher_auth_guard(request: Request, call_next):
             ).fetchone()
     request.state.user = dict(user) if user else None
     path = request.url.path
+    if path == "/student" or path.startswith("/api/student"):
+        if not user or user["role"] != "student":
+            if path == "/student":
+                return HTMLResponse((ROOT / "static" / "student.html").read_text(encoding="utf-8"))
+            return JSONResponse({"detail": "Student authentication required"}, status_code=401)
     if path == "/teacher" or path.startswith("/api/teacher"):
         if not user or user["role"] != "teacher":
             if path == "/teacher":
@@ -462,6 +473,12 @@ def create_assignment(payload: AssignmentCreateRequest, teacher: dict[str,Any] =
             raise HTTPException(404, "Class not found")
         con.execute("INSERT INTO assignments(id,teacher_id,class_id,title,description,lesson_id,due_at) VALUES(?,?,?,?,?,?,?)",
                     (assignment_id, teacher["id"], payload.class_id, payload.title.strip(), payload.description.strip(), payload.lesson_id, payload.due_at.strip()))
+    with db() as con:
+        members = con.execute("SELECT student_id FROM class_members WHERE class_id=?", (payload.class_id,)).fetchall()
+        for member in members:
+            con.execute("""INSERT INTO user_notifications(id,recipient_id,recipient_role,kind,title,body)
+                VALUES(?,?,'student','assignment','New assignment',?)""",
+                (str(uuid.uuid4()), member["student_id"], payload.title.strip()))
     return {"id": assignment_id, "title": payload.title.strip(), "class_id": payload.class_id, "lesson_id": payload.lesson_id, "due_at": payload.due_at.strip()}
 
 @app.get("/api/teacher/assignments")
@@ -506,6 +523,129 @@ def student_assignments(class_id: str | None = Query(default=None), student: dic
         query += " ORDER BY CASE WHEN sub.student_id IS NULL THEN 0 ELSE 1 END, a.created_at DESC"
         rows = con.execute(query, tuple(params)).fetchall()
     return {"assignments": [dict(row) for row in rows]}
+
+
+@app.get("/api/student/dashboard")
+def student_dashboard(student: dict[str, Any] = Depends(current_student)) -> dict[str, Any]:
+    today = date.today().isoformat()
+    with db() as con:
+        timetable = con.execute("""SELECT t.id,t.day_of_week,t.start_time,t.end_time,c.id AS class_id,c.name AS class_name,
+            s.name AS subject_name,u.display_name AS teacher_name
+            FROM class_members m JOIN school_classes sc ON sc.class_id=m.class_id
+            JOIN school_timetable t ON t.school_id=sc.school_id
+            JOIN school_teaching_assignments a ON a.id=t.teaching_assignment_id AND a.class_id=m.class_id
+            JOIN classes c ON c.id=a.class_id JOIN school_subjects s ON s.id=a.subject_id
+            JOIN users u ON u.id=a.teacher_id WHERE m.student_id=? ORDER BY t.day_of_week,t.start_time""",
+            (student["id"],)).fetchall()
+        attendance = con.execute("""SELECT attendance_date,status,c.name AS class_name
+            FROM school_attendance sa JOIN classes c ON c.id=sa.class_id
+            WHERE sa.student_id=? ORDER BY attendance_date DESC LIMIT 20""", (student["id"],)).fetchall()
+        notifications = con.execute("""SELECT id,kind,title,body,read_at,created_at FROM user_notifications
+            WHERE recipient_id=? AND recipient_role='student' ORDER BY created_at DESC LIMIT 30""", (student["id"],)).fetchall()
+    assignments = student_assignments(None, student)["assignments"]
+    return {"today": today, "timetable": [dict(x) for x in timetable],
+            "assignments": assignments, "attendance": [dict(x) for x in attendance],
+            "notifications": [dict(x) for x in notifications]}
+
+
+@app.get("/api/teacher/operations")
+def teacher_operations(teacher: dict[str, Any] = Depends(current_teacher)) -> dict[str, Any]:
+    with db() as con:
+        timetable = con.execute("""SELECT t.id,t.day_of_week,t.start_time,t.end_time,a.class_id,c.name AS class_name,
+            a.subject_id,s.name AS subject_name,u.display_name AS teacher_name
+            FROM school_timetable t JOIN school_teaching_assignments a ON a.id=t.teaching_assignment_id
+            JOIN school_teachers st ON st.school_id=t.school_id AND st.teacher_id=a.teacher_id
+            JOIN classes c ON c.id=a.class_id JOIN school_subjects s ON s.id=a.subject_id
+            JOIN users u ON u.id=a.teacher_id WHERE a.teacher_id=? ORDER BY t.day_of_week,t.start_time""",
+            (teacher["id"],)).fetchall()
+        classes = con.execute("""SELECT DISTINCT c.id,c.name FROM school_teaching_assignments a
+            JOIN school_teachers st ON st.school_id=a.school_id AND st.teacher_id=a.teacher_id
+            JOIN school_classes sc ON sc.school_id=a.school_id AND sc.class_id=a.class_id
+            JOIN classes c ON c.id=a.class_id WHERE a.teacher_id=? ORDER BY c.name""",
+            (teacher["id"],)).fetchall()
+    return {"timetable": [dict(x) for x in timetable], "classes": [dict(x) for x in classes]}
+
+
+@app.post("/api/teacher/attendance", status_code=201)
+def teacher_mark_attendance(payload: SchoolAttendanceRequest,
+                            teacher: dict[str, Any] = Depends(current_teacher)) -> dict[str, Any]:
+    try:
+        date.fromisoformat(payload.attendance_date)
+    except ValueError as exc:
+        raise HTTPException(422, "Invalid attendance date") from exc
+    with db() as con:
+        assignment = con.execute("""SELECT a.school_id FROM school_teaching_assignments a
+            JOIN school_teachers st ON st.school_id=a.school_id AND st.teacher_id=a.teacher_id
+            JOIN school_classes sc ON sc.school_id=a.school_id AND sc.class_id=a.class_id
+            WHERE a.class_id=? AND a.teacher_id=? LIMIT 1""", (payload.class_id, teacher["id"])).fetchone()
+        if not assignment:
+            raise HTTPException(404, "Class is not assigned to this teacher in a linked school")
+        if not con.execute("SELECT 1 FROM class_members WHERE class_id=? AND student_id=?",
+                           (payload.class_id, payload.student_id)).fetchone():
+            raise HTTPException(404, "Student is not enrolled in this class")
+        sid = assignment["school_id"]
+        con.execute("""INSERT INTO school_attendance(school_id,class_id,student_id,attendance_date,status,marked_by)
+            VALUES(?,?,?,?,?,?) ON CONFLICT(school_id,class_id,student_id,attendance_date)
+            DO UPDATE SET status=excluded.status,marked_by=excluded.marked_by,updated_at=CURRENT_TIMESTAMP""",
+            (sid,payload.class_id,payload.student_id,payload.attendance_date,payload.status,teacher["id"]))
+        recipients = con.execute("SELECT parent_id FROM parent_student_links WHERE student_id=? AND class_id=?",
+                                 (payload.student_id,payload.class_id)).fetchall()
+        con.execute("""INSERT INTO user_notifications(id,recipient_id,recipient_role,kind,title,body)
+            VALUES(?,?,'student','attendance','Attendance updated',?)""",
+            (str(uuid.uuid4()),payload.student_id,payload.status))
+        for recipient in recipients:
+            con.execute("""INSERT INTO user_notifications(id,recipient_id,recipient_role,kind,title,body)
+                VALUES(?,?,'parent','attendance','Student attendance updated',?)""",
+                (str(uuid.uuid4()),recipient["parent_id"],payload.status))
+    return {"saved": True, "class_id": payload.class_id, "student_id": payload.student_id,
+            "attendance_date": payload.attendance_date, "status": payload.status}
+
+
+@app.get("/api/student/notifications")
+def student_notifications(student: dict[str, Any] = Depends(current_student)) -> dict[str, Any]:
+    with db() as con:
+        rows=con.execute("SELECT id,kind,title,body,read_at,created_at FROM user_notifications WHERE recipient_id=? AND recipient_role='student' ORDER BY created_at DESC LIMIT 50",(student["id"],)).fetchall()
+    return {"notifications":[dict(x) for x in rows]}
+
+
+@app.get("/api/teacher/notifications")
+def teacher_notifications(teacher: dict[str, Any] = Depends(current_teacher)) -> dict[str, Any]:
+    with db() as con:
+        rows=con.execute("SELECT id,kind,title,body,read_at,created_at FROM user_notifications WHERE recipient_id=? AND recipient_role='teacher' ORDER BY created_at DESC LIMIT 50",(teacher["id"],)).fetchall()
+    return {"notifications":[dict(x) for x in rows]}
+
+
+@app.get("/api/parent/students/{student_id}/school-summary")
+def parent_student_school_summary(student_id: str, class_id: str = Query(...),
+                                  parent: dict[str, Any] = Depends(current_parent)) -> dict[str, Any]:
+    with db() as con:
+        link=con.execute("SELECT 1 FROM parent_student_links WHERE parent_id=? AND student_id=? AND class_id=?",
+                         (parent["id"],student_id,class_id)).fetchone()
+        if not link: raise HTTPException(404,"Linked student report not found")
+        attendance=con.execute("""SELECT attendance_date,status FROM school_attendance
+            WHERE student_id=? AND class_id=? ORDER BY attendance_date DESC LIMIT 30""",(student_id,class_id)).fetchall()
+        timetable=con.execute("""SELECT t.day_of_week,t.start_time,t.end_time,s.name AS subject_name
+            FROM school_timetable t JOIN school_teaching_assignments a ON a.id=t.teaching_assignment_id
+            JOIN school_classes sc ON sc.school_id=t.school_id AND sc.class_id=a.class_id
+            JOIN school_subjects s ON s.id=a.subject_id WHERE a.class_id=? ORDER BY t.day_of_week,t.start_time""",
+            (class_id,)).fetchall()
+        notifications=con.execute("""SELECT id,title,body,read_at,created_at FROM user_notifications
+            WHERE recipient_id=? AND recipient_role='parent' ORDER BY created_at DESC LIMIT 20""",(parent["id"],)).fetchall()
+    return {"attendance":[dict(x) for x in attendance],"timetable":[dict(x) for x in timetable],
+            "notifications":[dict(x) for x in notifications]}
+
+
+@app.post("/api/notifications/{notification_id}/read")
+def mark_notification_read(notification_id: str, request: Request) -> dict[str, Any]:
+    user=getattr(request.state,"user",None)
+    if not user: raise HTTPException(401,"Authentication required")
+    role=user["role"]
+    if role not in ("student","teacher","parent"): raise HTTPException(403,"Notifications unavailable for this role")
+    with db() as con:
+        cur=con.execute("""UPDATE user_notifications SET read_at=CURRENT_TIMESTAMP
+            WHERE id=? AND recipient_id=? AND recipient_role=?""",(notification_id,user["id"],role))
+        if cur.rowcount==0: raise HTTPException(404,"Notification not found")
+    return {"read":True}
 
 
 def current_parent(request: Request) -> dict[str, Any]:
@@ -806,6 +946,15 @@ def school_admin_mark_attendance(payload: SchoolAttendanceRequest,
             VALUES(?,?,?,?,?,?) ON CONFLICT(school_id,class_id,student_id,attendance_date)
             DO UPDATE SET status=excluded.status,marked_by=excluded.marked_by,updated_at=CURRENT_TIMESTAMP""",
             (sid, payload.class_id, payload.student_id, payload.attendance_date, payload.status, admin["id"]))
+        con.execute("""INSERT INTO user_notifications(id,recipient_id,recipient_role,kind,title,body)
+            VALUES(?,?,'student','attendance','Attendance updated',?)""",
+            (str(uuid.uuid4()),payload.student_id,payload.status))
+        parents=con.execute("SELECT parent_id FROM parent_student_links WHERE student_id=? AND class_id=?",
+                            (payload.student_id,payload.class_id)).fetchall()
+        for recipient in parents:
+            con.execute("""INSERT INTO user_notifications(id,recipient_id,recipient_role,kind,title,body)
+                VALUES(?,?,'parent','attendance','Student attendance updated',?)""",
+                (str(uuid.uuid4()),recipient["parent_id"],payload.status))
     return {"saved": True, "class_id": payload.class_id, "student_id": payload.student_id,
             "attendance_date": payload.attendance_date, "status": payload.status}
 
@@ -982,6 +1131,11 @@ def account_page() -> str:
 @app.get("/", response_class=HTMLResponse)
 def home() -> str:
     return (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+
+
+@app.get("/student", response_class=HTMLResponse)
+def student_home() -> str:
+    return (ROOT / "static" / "student.html").read_text(encoding="utf-8")
 
 
 @app.get("/teacher", response_class=HTMLResponse)
