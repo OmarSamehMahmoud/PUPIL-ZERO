@@ -525,6 +525,13 @@ def student_assignments(class_id: str | None = Query(default=None), student: dic
     return {"assignments": [dict(row) for row in rows]}
 
 
+def current_parent(request: Request) -> dict[str, Any]:
+    user = getattr(request.state, "user", None)
+    if not user or user.get("role") != "parent":
+        raise HTTPException(401, "Parent authentication required")
+    return user
+
+
 @app.get("/api/student/dashboard")
 def student_dashboard(student: dict[str, Any] = Depends(current_student)) -> dict[str, Any]:
     today = date.today().isoformat()
@@ -646,13 +653,6 @@ def mark_notification_read(notification_id: str, request: Request) -> dict[str, 
             WHERE id=? AND recipient_id=? AND recipient_role=?""",(notification_id,user["id"],role))
         if cur.rowcount==0: raise HTTPException(404,"Notification not found")
     return {"read":True}
-
-
-def current_parent(request: Request) -> dict[str, Any]:
-    user = getattr(request.state, "user", None)
-    if not user or user.get("role") != "parent":
-        raise HTTPException(401, "Parent authentication required")
-    return user
 
 
 def current_school_admin(request: Request) -> dict[str, Any]:
