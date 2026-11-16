@@ -444,7 +444,7 @@ def link_school_teacher(payload: SchoolTeacherLinkRequest, admin: dict[str, Any]
         try:
             con.execute("INSERT INTO school_teachers(school_id,teacher_id) VALUES(?,?)", (school["school_id"], teacher["id"]))
         except sqlite3.IntegrityError:
-            raise HTTPException(409, "Teacher is already linked to this school")
+            raise HTTPException(409, "Teacher is already linked to a school workspace")
     return {"linked": True, "teacher": {"id": teacher["id"], "email": teacher["email"], "display_name": teacher["display_name"]}}
 
 
