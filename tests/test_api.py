@@ -634,3 +634,44 @@ def test_school_timetable_attendance_and_lesson_operations_scope(tmp_path, monke
             "status": "completed"
         }).status_code == 404
         assert other_admin.get("/api/school-admin/operations-report?date_from=2026-11-01&date_to=2026-11-30").json()["attendance"] == {}
+
+
+
+def test_daily_learning_experience_and_role_scoped_notifications(tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "DB_PATH", tmp_path / "daily_learning.sqlite3")
+    with TestClient(main.app) as admin, TestClient(main.app) as teacher, TestClient(main.app) as student:
+        assert admin.post("/api/auth/register-school-admin", json={
+            "school_name":"Daily School","email":"daily-admin@example.test",
+            "password":"SchoolAdmin123!","display_name":"Daily Admin"}).status_code == 201
+        assert teacher.post("/api/auth/register-teacher", json={
+            "email":"daily-teacher@example.test","password":"TeacherPass123!","display_name":"Daily Teacher"}).status_code == 201
+        assert admin.post("/api/school-admin/teachers", json={"teacher_email":"daily-teacher@example.test"}).status_code == 201
+        classroom=teacher.post("/api/classes",json={"name":"Daily Class"})
+        joined=student.post("/api/classes/join",json={"join_code":classroom.json()["join_code"],
+            "display_name":"Daily Student","email":"daily-student@example.test","password":"StudentPass123!"})
+        student_id=joined.json()["student"]["id"]
+        department=admin.post("/api/school-admin/departments",json={"name":"Languages"})
+        subject=admin.post("/api/school-admin/subjects",json={"name":"English","department_id":department.json()["id"]})
+        overview=admin.get("/api/school-admin/overview").json()
+        assignment=admin.post("/api/school-admin/teaching-assignments",json={"class_id":classroom.json()["id"],
+            "subject_id":subject.json()["id"],"teacher_id":overview["teachers"][0]["id"]})
+        slot=admin.post("/api/school-admin/timetable",json={"teaching_assignment_id":assignment.json()["assignment"]["id"],
+            "day_of_week":date.today().weekday(),"start_time":"10:00","end_time":"10:45"})
+        assert slot.status_code==201
+        task=teacher.post("/api/teacher/assignments",json={"class_id":classroom.json()["id"],
+            "title":"Reading practice","description":"Read the passage","lesson_id":"fractions","due_at":"2026-11-20T17:00"})
+        assert task.status_code==201
+        student_dash=student.get("/api/student/dashboard")
+        assert student_dash.status_code==200
+        assert any(x["subject_name"]=="English" for x in student_dash.json()["timetable"])
+        assert any(x["title"]=="Reading practice" for x in student_dash.json()["assignments"])
+        assert student_dash.json()["notifications"][0]["kind"]=="assignment"
+        assert teacher.get("/api/teacher/operations").json()["timetable"][0]["subject_name"]=="English"
+        mark=teacher.post("/api/teacher/attendance",json={"class_id":classroom.json()["id"],
+            "student_id":student_id,"attendance_date":date.today().isoformat(),"status":"present"})
+        assert mark.status_code==201
+        assert student.get("/api/student/dashboard").json()["attendance"][0]["status"]=="present"
+        notification=student.get("/api/student/notifications").json()["notifications"][0]
+        assert notification["kind"]=="attendance"
+        assert student.post(f"/api/notifications/{notification['id']}/read",json={}).status_code==200
+        assert student.get("/api/parent/students").status_code==401
