@@ -450,3 +450,55 @@ def test_school_admin_workspace_and_school_scope(tmp_path, monkeypatch):
         assert teacher.get("/api/school-admin/overview").status_code == 401
         assert admin_a.post("/api/auth/logout").status_code == 200
         assert admin_a.get("/api/school-admin/overview").status_code == 401
+
+
+def test_school_teacher_invite_registration_and_unlink_scope(tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "DB_PATH", tmp_path / "school_invites.sqlite3")
+    with TestClient(main.app) as admin, TestClient(main.app) as invited_teacher, TestClient(main.app) as outsider:
+        created = admin.post("/api/auth/register-school-admin", json={
+            "school_name": "Invite Academy", "email": "invite-admin@example.test",
+            "password": "SchoolAdmin123!", "display_name": "Admin"
+        })
+        assert created.status_code == 201
+
+        invite = admin.post("/api/school-admin/teacher-invites", json={"email": "new-teacher@example.test"})
+        assert invite.status_code == 201
+        token = invite.json()["invite_token"]
+        assert invite.json()["expires_in_days"] == 7
+
+        wrong_email = invited_teacher.post("/api/auth/register-invited-teacher", json={
+            "invite_token": token, "email": "someone-else@example.test",
+            "password": "TeacherPass123!", "display_name": "Wrong Person"
+        })
+        assert wrong_email.status_code == 400
+
+        registered = invited_teacher.post("/api/auth/register-invited-teacher", json={
+            "invite_token": token, "email": "NEW-TEACHER@example.test",
+            "password": "TeacherPass123!", "display_name": "Invited Teacher"
+        })
+        assert registered.status_code == 201
+        teacher_id = registered.json()["user"]["id"]
+        assert invited_teacher.get("/api/auth/me").json()["user"]["role"] == "teacher"
+
+        replay = outsider.post("/api/auth/register-invited-teacher", json={
+            "invite_token": token, "email": "new-teacher@example.test",
+            "password": "TeacherPass456!", "display_name": "Replay"
+        })
+        assert replay.status_code == 400
+
+        classroom = invited_teacher.post("/api/classes", json={"name": "Invited Class"})
+        assert classroom.status_code == 201
+        overview = admin.get("/api/school-admin/overview").json()
+        assert overview["teacher_count"] == 1
+        assert overview["class_count"] == 1
+
+        unlinked = admin.delete(f"/api/school-admin/teachers/{teacher_id}")
+        assert unlinked.status_code == 200
+        assert unlinked.json()["unlinked"] is True
+        after = admin.get("/api/school-admin/overview").json()
+        assert after["teacher_count"] == 0
+        assert after["class_count"] == 0
+        # Unlinking is a school relationship change, not account or class deletion.
+        assert invited_teacher.get("/api/classes").status_code == 200
+        assert invited_teacher.get(f"/api/classes/{classroom.json()['id']}/members").status_code == 200
+        assert admin.delete(f"/api/school-admin/teachers/{teacher_id}").status_code == 404
