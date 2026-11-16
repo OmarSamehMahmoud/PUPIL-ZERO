@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from app.assessment import assess_explanation
+from app.adaptive import adaptation_summary
 from app.curriculum import get_lesson
 from app.llm import generate_reply, public_status
 from app.learning_journey import build_learning_journey
@@ -20,7 +21,7 @@ from app.teacher_intelligence import build_review_priorities
 
 ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = ROOT / "pupil_zero.db"
-app = FastAPI(title="PUPIL ZERO", version="0.6.0", description="Local-first learning-by-teaching MVP")
+app = FastAPI(title="PUPIL ZERO", version="0.7.0", description="Local-first learning-by-teaching MVP")
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
 
@@ -236,7 +237,7 @@ def teacher_session_detail(session_id: str) -> dict[str, Any]:
 
 @app.get("/api/health")
 def health() -> dict[str, Any]:
-    return {"status": "ok", "product": "PUPIL ZERO", "version": "0.6.0", **public_status()}
+    return {"status": "ok", "product": "PUPIL ZERO", "version": "0.7.0", **public_status()}
 
 
 @app.get("/api/lessons")
@@ -258,9 +259,23 @@ def start_session(payload: StartRequest) -> dict[str, Any]:
         learner_id = str(uuid.UUID(learner_id))
     except ValueError as exc:
         raise HTTPException(422, "learner_id must be a UUID") from exc
-    opening = lesson["scenarios"][0]["prompt_ar"]
+    with db() as con:
+        previous_states = con.execute(
+            "SELECT state_json FROM sessions WHERE learner_id=? AND lesson_id=? ORDER BY created_at DESC LIMIT 10",
+            (learner_id, payload.lesson_id),
+        ).fetchall()
+    prior_review_targets: list[str] = []
+    for previous in previous_states:
+        try:
+            prior_state = json.loads(previous["state_json"] or "{}")
+        except (TypeError, json.JSONDecodeError):
+            continue
+        for target in prior_state.get("review_targets", []):
+            if isinstance(target, str) and target not in prior_review_targets:
+                prior_review_targets.append(target)
+    dialogue_state = initial_state(lesson, prior_review_targets)
+    opening = lesson["scenarios"][dialogue_state["scenario_index"]]["prompt_ar"]
     transcript = [{"role": "ai", "text": opening}]
-    dialogue_state = initial_state(lesson)
     with db() as con:
         con.execute(
             "INSERT INTO sessions(id, lesson_id, persona, transcript, state_json, learner_id) VALUES (?, ?, ?, ?, ?, ?)",
@@ -275,6 +290,7 @@ def start_session(payload: StartRequest) -> dict[str, Any]:
         "lesson": lesson["title_ar"],
         "reply": opening,
         "stage": dialogue_state["stage"],
+        "adaptation": adaptation_summary(dialogue_state.get("adaptation_target"), lesson),
         "mode": public_status()["mode"],
     }
 
