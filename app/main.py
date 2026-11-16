@@ -3,14 +3,16 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
+import time
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, HTTPException, Query, Request, Response, Depends
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from app.auth import hash_password, verify_password, new_session_token, token_digest, new_join_code
 from app.assessment import assess_explanation
 from app.intervention_planner import build_intervention_plan
 from app.adaptive import adaptation_summary
@@ -22,7 +24,7 @@ from app.teacher_intelligence import build_review_priorities
 
 ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = ROOT / "pupil_zero.db"
-app = FastAPI(title="PUPIL ZERO", version="0.9.0", description="Local-first learning-by-teaching MVP")
+app = FastAPI(title="PUPIL ZERO", version="1.0.0", description="Local-first learning-by-teaching MVP")
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
 
@@ -40,6 +42,25 @@ class MessageRequest(BaseModel):
 class FinishRequest(BaseModel):
     session_id: str
 
+
+class TeacherRegisterRequest(BaseModel):
+    email: str = Field(min_length=5, max_length=254)
+    password: str = Field(min_length=10, max_length=128)
+    display_name: str = Field(min_length=2, max_length=80)
+
+class LoginRequest(BaseModel):
+    email: str = Field(min_length=5, max_length=254)
+    password: str = Field(min_length=1, max_length=128)
+
+class ClassCreateRequest(BaseModel):
+    name: str = Field(min_length=2, max_length=100)
+    grade_label: str = Field(default="", max_length=40)
+
+class StudentJoinRequest(BaseModel):
+    join_code: str = Field(min_length=8, max_length=8)
+    display_name: str = Field(min_length=2, max_length=80)
+    email: str = Field(min_length=5, max_length=254)
+    password: str = Field(min_length=10, max_length=128)
 
 class InterventionFeedbackRequest(BaseModel):
     lesson_id: str
@@ -66,6 +87,27 @@ def init_db() -> None:
             con.execute("ALTER TABLE sessions ADD COLUMN state_json TEXT NOT NULL DEFAULT '{}'")
         if "learner_id" not in columns:
             con.execute("ALTER TABLE sessions ADD COLUMN learner_id TEXT")
+        con.execute("""CREATE TABLE IF NOT EXISTS users (
+            id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, display_name TEXT NOT NULL,
+            role TEXT NOT NULL CHECK(role IN ('teacher','student')),
+            password_salt TEXT NOT NULL, password_hash TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )""")
+        con.execute("""CREATE TABLE IF NOT EXISTS auth_sessions (
+            token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id),
+            expires_at INTEGER NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )""")
+        con.execute("""CREATE TABLE IF NOT EXISTS classes (
+            id TEXT PRIMARY KEY, teacher_id TEXT NOT NULL REFERENCES users(id),
+            name TEXT NOT NULL, grade_label TEXT NOT NULL DEFAULT '',
+            join_code TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )""")
+        con.execute("""CREATE TABLE IF NOT EXISTS class_members (
+            class_id TEXT NOT NULL REFERENCES classes(id),
+            student_id TEXT NOT NULL REFERENCES users(id),
+            joined_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY(class_id, student_id)
+        )""")
         con.execute("""CREATE TABLE IF NOT EXISTS intervention_feedback (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             lesson_id TEXT NOT NULL,
@@ -80,6 +122,88 @@ def init_db() -> None:
 def startup() -> None:
     init_db()
 
+
+@app.middleware("http")
+async def teacher_auth_guard(request: Request, call_next):
+    path = request.url.path
+    if path == "/teacher" or path.startswith("/api/teacher"):
+        token = request.cookies.get("pupil_session", "")
+        with db() as con:
+            user = con.execute("SELECT u.id,u.email,u.display_name,u.role FROM auth_sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>?", (token_digest(token), int(time.time()))).fetchone() if token else None
+        if not user or user["role"] != "teacher":
+            if path == "/teacher":
+                return HTMLResponse("<!doctype html><html lang=ar dir=rtl><meta charset=utf-8><body><h1>تسجيل دخول المدرّس مطلوب</h1><a href=/ >العودة</a></body></html>", status_code=401)
+            return JSONResponse({"detail":"Teacher authentication required"}, status_code=401)
+        request.state.user = dict(user)
+    return await call_next(request)
+
+def current_teacher(request: Request) -> dict[str, Any]:
+    user = getattr(request.state, "user", None)
+    if not user or user.get("role") != "teacher": raise HTTPException(401, "Teacher authentication required")
+    return user
+
+@app.post("/api/auth/register-teacher", status_code=201)
+def register_teacher(payload: TeacherRegisterRequest, response: Response) -> dict[str, Any]:
+    email = payload.email.strip().lower()
+    if "@" not in email: raise HTTPException(422, "Enter a valid email address")
+    salt, digest = hash_password(payload.password)
+    user_id, token = str(uuid.uuid4()), new_session_token()
+    with db() as con:
+        try: con.execute("INSERT INTO users(id,email,display_name,role,password_salt,password_hash) VALUES(?,?,?,'teacher',?,?)", (user_id,email,payload.display_name.strip(),salt,digest))
+        except sqlite3.IntegrityError as exc: raise HTTPException(409,"An account with this email already exists") from exc
+        con.execute("INSERT INTO auth_sessions(token_hash,user_id,expires_at) VALUES(?,?,?)",(token_digest(token),user_id,int(time.time())+604800))
+    response.set_cookie("pupil_session",token,httponly=True,samesite="strict",max_age=604800,path="/")
+    return {"user":{"id":user_id,"email":email,"display_name":payload.display_name.strip(),"role":"teacher"}}
+
+@app.post("/api/auth/login")
+def login(payload: LoginRequest, response: Response) -> dict[str, Any]:
+    with db() as con: user=con.execute("SELECT * FROM users WHERE email=?",(payload.email.strip().lower(),)).fetchone()
+    if not user or not verify_password(payload.password,user["password_salt"],user["password_hash"]): raise HTTPException(401,"Invalid email or password")
+    token=new_session_token()
+    with db() as con: con.execute("INSERT INTO auth_sessions(token_hash,user_id,expires_at) VALUES(?,?,?)",(token_digest(token),user["id"],int(time.time())+604800))
+    response.set_cookie("pupil_session",token,httponly=True,samesite="strict",max_age=604800,path="/")
+    return {"user":{"id":user["id"],"email":user["email"],"display_name":user["display_name"],"role":user["role"]}}
+
+@app.post("/api/auth/logout")
+def logout(request: Request, response: Response) -> dict[str,bool]:
+    token=request.cookies.get("pupil_session","")
+    if token:
+        with db() as con: con.execute("DELETE FROM auth_sessions WHERE token_hash=?",(token_digest(token),))
+    response.delete_cookie("pupil_session",path="/")
+    return {"logged_out":True}
+
+@app.post("/api/classes", status_code=201)
+def create_class(payload: ClassCreateRequest, teacher: dict[str,Any] = Depends(current_teacher)) -> dict[str,Any]:
+    class_id, code = str(uuid.uuid4()), new_join_code()
+    with db() as con:
+        while con.execute("SELECT 1 FROM classes WHERE join_code=?",(code,)).fetchone(): code=new_join_code()
+        con.execute("INSERT INTO classes(id,teacher_id,name,grade_label,join_code) VALUES(?,?,?,?,?)",(class_id,teacher["id"],payload.name.strip(),payload.grade_label.strip(),code))
+    return {"id":class_id,"name":payload.name.strip(),"grade_label":payload.grade_label.strip(),"join_code":code}
+
+@app.get("/api/classes")
+def list_classes(teacher: dict[str,Any] = Depends(current_teacher)) -> dict[str,Any]:
+    with db() as con: rows=con.execute("SELECT c.id,c.name,c.grade_label,c.join_code,COUNT(m.student_id) AS student_count FROM classes c LEFT JOIN class_members m ON m.class_id=c.id WHERE c.teacher_id=? GROUP BY c.id",(teacher["id"],)).fetchall()
+    return {"classes":[dict(row) for row in rows]}
+
+@app.get("/api/classes/{class_id}/members")
+def class_members(class_id: str, teacher: dict[str,Any] = Depends(current_teacher)) -> dict[str,Any]:
+    with db() as con:
+        if not con.execute("SELECT 1 FROM classes WHERE id=? AND teacher_id=?",(class_id,teacher["id"])).fetchone(): raise HTTPException(404,"Class not found")
+        rows=con.execute("SELECT u.id,u.display_name,u.email,m.joined_at FROM class_members m JOIN users u ON u.id=m.student_id WHERE m.class_id=?",(class_id,)).fetchall()
+    return {"members":[dict(row) for row in rows]}
+
+@app.post("/api/classes/join", status_code=201)
+def join_class(payload: StudentJoinRequest) -> dict[str,Any]:
+    email=payload.email.strip().lower()
+    if "@" not in email: raise HTTPException(422,"Enter a valid email address")
+    with db() as con:
+        classroom=con.execute("SELECT id,name FROM classes WHERE join_code=?",(payload.join_code.strip().upper(),)).fetchone()
+        if not classroom: raise HTTPException(404,"Invalid class code")
+        salt,digest=hash_password(payload.password); student_id=str(uuid.uuid4())
+        try: con.execute("INSERT INTO users(id,email,display_name,role,password_salt,password_hash) VALUES(?,?,?,'student',?,?)",(student_id,email,payload.display_name.strip(),salt,digest))
+        except sqlite3.IntegrityError as exc: raise HTTPException(409,"An account with this email already exists") from exc
+        con.execute("INSERT INTO class_members(class_id,student_id) VALUES(?,?)",(classroom["id"],student_id))
+    return {"student":{"id":student_id,"display_name":payload.display_name.strip()},"class":{"id":classroom["id"],"name":classroom["name"]}}
 
 @app.get("/", response_class=HTMLResponse)
 def home() -> str:
@@ -312,7 +436,7 @@ def teacher_session_detail(session_id: str) -> dict[str, Any]:
 
 @app.get("/api/health")
 def health() -> dict[str, Any]:
-    return {"status": "ok", "product": "PUPIL ZERO", "version": "0.9.0", **public_status()}
+    return {"status": "ok", "product": "PUPIL ZERO", "version": "1.0.0", **public_status()}
 
 
 @app.get("/api/lessons")
