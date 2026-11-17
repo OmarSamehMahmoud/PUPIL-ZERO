@@ -21,7 +21,7 @@ from app.assessment import assess_explanation
 from app.intervention_planner import build_intervention_plan
 from app.adaptive import adaptation_summary
 from app.curriculum import get_lesson
-from app.llm import generate_reply, public_status, generate_formative_quiz
+from app.llm import generate_reply, public_status, generate_formative_quiz, generate_learning_feedback, generate_teacher_review_suggestions
 from app.learning_journey import build_learning_journey
 from app.pedagogy import advance_state, initial_state, state_context
 from app.teacher_intelligence import build_review_priorities
@@ -29,7 +29,7 @@ from app.learning_engine import build_study_plan, get_quiz_questions, grade_quiz
 
 ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = ROOT / "pupil_zero.db"
-app = FastAPI(title="PUPIL ZERO", version="2.1.0", description="Local-first learning-by-teaching MVP")
+app = FastAPI(title="PUPIL ZERO", version="2.2.0", description="Local-first learning-by-teaching MVP")
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
 
@@ -592,8 +592,8 @@ async def create_student_quiz(payload: QuizStartRequest,
 
 
 @app.post("/api/student/quizzes/{quiz_id}/submit")
-def submit_student_quiz(quiz_id: str, payload: QuizSubmitRequest,
-                        student: dict[str, Any] = Depends(current_student)) -> dict[str, Any]:
+async def submit_student_quiz(quiz_id: str, payload: QuizSubmitRequest,
+                              student: dict[str, Any] = Depends(current_student)) -> dict[str, Any]:
     with db() as con:
         row = con.execute("SELECT * FROM student_quizzes WHERE id=? AND student_id=?",
                           (quiz_id, student["id"])).fetchone()
@@ -606,9 +606,49 @@ def submit_student_quiz(quiz_id: str, payload: QuizSubmitRequest,
         if set(payload.answers) - allowed:
             raise HTTPException(422, "Answers contain an unknown question id")
         result = grade_quiz(questions, payload.answers)
+        lesson = get_lesson(row["lesson_id"])
+        concept_map = {item["id"]: item for item in (lesson or {}).get("concepts", [])}
+        option_maps = {q["id"]: {o["id"]: o["text"] for o in q.get("options", [])} for q in questions}
+        incorrect_items = []
+        for question, detail in zip(questions, result["details"]):
+            if detail["correct"]:
+                continue
+            concept = concept_map.get(question["concept_id"], {})
+            incorrect_items.append({
+                "question_id": question["id"], "concept_id": question["concept_id"],
+                "question": question["prompt"],
+                "selected_answer": option_maps[question["id"]].get(detail["selected_option"], "لم يتم اختيار إجابة"),
+                "correct_answer": option_maps[question["id"]].get(question["correct_option"], ""),
+                "authored_explanation": question["explanation"],
+                "concept_explanation": concept.get("correction", ""),
+            })
+        feedback_source = "authored_guidance"
+        for detail in result["details"]:
+            if not detail["correct"]:
+                concept = concept_map.get(detail["concept_id"], {})
+                detail["learning_feedback"] = {
+                    "feedback": "خلّينا نبص على الفكرة من زاوية تانية.",
+                    "alternative_explanation": concept.get("correction") or detail["explanation"],
+                    "practice_prompt": "جرّب تشرح الفكرة بمثال جديد من عندك.",
+                }
+        if incorrect_items and public_status().get("configured"):
+            try:
+                generated = await generate_learning_feedback(lesson, incorrect_items)
+                generated_by_id = {item["question_id"]: item for item in generated}
+                for detail in result["details"]:
+                    if not detail["correct"] and detail["question_id"] in generated_by_id:
+                        detail["learning_feedback"] = {k:v for k,v in generated_by_id[detail["question_id"]].items() if k!="question_id"}
+                feedback_source = "local_ai"
+            except Exception:
+                # Safe authored explanation remains available if the local model is offline.
+                feedback_source = "authored_guidance_fallback"
+        result["feedback_source"] = feedback_source
+        result["notice"] += " الشرح الإضافي اقتراح تعليمي آلي أو مكتوب مسبقًا ويحتاج مراجعة المعلم."
         result_json = json.dumps(result, ensure_ascii=False)
-        con.execute("UPDATE student_quizzes SET submitted_at=CURRENT_TIMESTAMP,result_json=? WHERE id=? AND student_id=? AND submitted_at IS NULL",
-                    (result_json, quiz_id, student["id"]))
+        updated = con.execute("UPDATE student_quizzes SET submitted_at=CURRENT_TIMESTAMP,result_json=? WHERE id=? AND student_id=? AND submitted_at IS NULL",
+                              (result_json, quiz_id, student["id"]))
+        if updated.rowcount != 1:
+            raise HTTPException(409, "This quiz has already been submitted")
     return result
 
 
@@ -1524,6 +1564,72 @@ def teacher_class_progress(class_id: str, teacher: dict[str, Any] = Depends(curr
         "student_count": len(results), "students": results,
         "notice": "مؤشرات وصفية من الجلسات المسجلة فقط. عدم وجود جلسة لا يعني عدم التعلم، ومطابقة الكلمات ليست درجة أو مقياس إتقان.",
     }
+
+
+@app.get("/api/teacher/classes/{class_id}/review-suggestions")
+async def teacher_class_review_suggestions(class_id: str, teacher: dict[str, Any] = Depends(current_teacher)) -> dict[str, Any]:
+    with db() as con:
+        classroom = con.execute("SELECT id,name FROM classes WHERE id=? AND teacher_id=?",
+                                (class_id, teacher["id"])).fetchone()
+        if not classroom:
+            raise HTTPException(404, "Class not found")
+        rows = con.execute("""SELECT q.lesson_id,q.result_json FROM student_quizzes q
+            JOIN class_members m ON m.student_id=q.student_id
+            WHERE m.class_id=? AND q.submitted_at IS NOT NULL ORDER BY q.submitted_at DESC LIMIT 500""",
+            (class_id,)).fetchall()
+    counts: dict[tuple[str,str],dict[str,int]] = {}
+    for row in rows:
+        try:
+            result=json.loads(row["result_json"] or "{}")
+        except (TypeError,json.JSONDecodeError):
+            continue
+        for detail in result.get("details",[]):
+            key=(row["lesson_id"],detail.get("concept_id",""))
+            if not key[1]:
+                continue
+            bucket=counts.setdefault(key,{"attempts":0,"incorrect":0})
+            bucket["attempts"]+=1
+            bucket["incorrect"]+=int(not bool(detail.get("correct")))
+    suggestions=[]
+    for (lesson_id,concept_id),stats in counts.items():
+        if stats["incorrect"] < 2:
+            continue
+        lesson=get_lesson(lesson_id)
+        if not lesson:
+            continue
+        concept=next((item for item in lesson.get("concepts",[]) if item["id"]==concept_id),None)
+        if not concept:
+            continue
+        suggestions.append({"lesson_id":lesson_id,"lesson":lesson["title_ar"],
+            "concept_id":concept_id,"concept":concept["label_ar"],
+            "attempts":stats["attempts"],"incorrect_answers":stats["incorrect"],
+            "activity":"استخدم مثالًا محسوسًا، ثم اطلب من الطلاب مقارنة طريقتين للحل.",
+            "teacher_question":"ما الذي يتغير إذا غيّرنا قيمة واحدة فقط؟"})
+    suggestions.sort(key=lambda item:(-item["incorrect_answers"],item["lesson"],item["concept"]))
+    source="authored_guidance"
+    if suggestions and public_status().get("configured"):
+        grouped={}
+        for item in suggestions:
+            grouped.setdefault(item["lesson_id"],[]).append(item)
+        try:
+            for lesson_id,items in grouped.items():
+                lesson=get_lesson(lesson_id)
+                patterns=[{"concept_id":x["concept_id"],"concept":x["concept"],
+                           "incorrect_answers":x["incorrect_answers"],"attempts":x["attempts"],
+                           "authored_correction":next(c["correction"] for c in lesson["concepts"] if c["id"]==x["concept_id"])}
+                          for x in items]
+                generated=await generate_teacher_review_suggestions(lesson,patterns)
+                by_id={x["concept_id"]:x for x in generated}
+                for item in items:
+                    if item["concept_id"] in by_id:
+                        item["activity"]=by_id[item["concept_id"]]["activity"]
+                        item["teacher_question"]=by_id[item["concept_id"]]["teacher_question"]
+            source="local_ai"
+        except Exception:
+            source="authored_guidance_fallback"
+    return {"class_id":class_id,"class_name":classroom["name"],"suggestions":suggestions,
+        "source":source,
+        "notice":"تجميع على مستوى الفصل من إجابات الاختبارات التدريبية فقط. لا يعرض أسماء الطلاب ولا يشخّص سوء فهم أو يقيس الإتقان. لا تظهر فكرة إلا بعد تسجيل إجابتين غير صحيحتين على الأقل، ويجب مراجعة المعلم للاقتراح."}
 
 
 @app.get("/api/teacher/students/{student_id}/progress")
