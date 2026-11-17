@@ -747,3 +747,60 @@ def test_invalid_local_ai_question_set_is_rejected(tmp_path, monkeypatch):
         assert False, "Expected invalid generated question to be rejected"
     except ValueError:
         pass
+
+
+
+def test_student_gets_private_alternative_feedback_and_teacher_aggregate(tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "DB_PATH", tmp_path / "v22_feedback.sqlite3")
+    monkeypatch.setattr(main, "public_status", lambda: {"configured": True, "mode": "live_ai"})
+    async def fake_generate(lesson, incorrect_items):
+        return [{"question_id":item["question_id"],"feedback":"اختيارك مفهوم، وخلّينا نفكر فيها بهدوء.",
+                 "alternative_explanation":"تخيّل نفس البيتزا مقسمة إلى أجزاء متساوية.",
+                 "practice_prompt":"ارسم بيتزا مقسمة إلى أربعة أجزاء."} for item in incorrect_items]
+    async def fake_teacher(lesson, patterns):
+        return [{"concept_id":item["concept_id"],"activity":"اعرض نموذجًا بصريًا وقارن بين طريقتين.",
+                 "teacher_question":"كيف نعرف حجم الجزء عندما يزيد عدد الأجزاء؟"} for item in patterns]
+    monkeypatch.setattr(main, "generate_learning_feedback", fake_generate)
+    monkeypatch.setattr(main, "generate_teacher_review_suggestions", fake_teacher)
+    with TestClient(main.app) as teacher, TestClient(main.app) as student:
+        assert teacher.post("/api/auth/register-teacher",json={"email":"v22teacher@example.test",
+            "password":"TeacherPass123!","display_name":"Teacher"}).status_code==201
+        classroom=teacher.post("/api/classes",json={"name":"Review Class"})
+        code=classroom.json()["join_code"]
+        assert student.post("/api/classes/join",json={"join_code":code,"display_name":"Learner One",
+            "email":"v22student1@example.test","password":"StudentPass123!"}).status_code==201
+        quiz=student.post("/api/student/quizzes",json={"lesson_id":"fractions"}).json()
+        answers={q["id"]:"a" for q in quiz["questions"]}
+        # Ensure at least one wrong answer independent of option order.
+        stored=main.db()
+        try:
+            qs=stored.execute("SELECT questions_json FROM student_quizzes WHERE id=?",(quiz["quiz_id"],)).fetchone()
+            questions=__import__("json").loads(qs["questions_json"])
+        finally:
+            stored.close()
+        answers={q["id"]:next(o["id"] for o in q["options"] if o["id"]!=q["correct_option"]) for q in questions}
+        submitted=student.post(f"/api/student/quizzes/{quiz['quiz_id']}/submit",json={"answers":answers})
+        assert submitted.status_code==200
+        assert submitted.json()["feedback_source"]=="local_ai"
+        assert all("learning_feedback" in d for d in submitted.json()["details"] if not d["correct"])
+        suggestions=teacher.get(f"/api/teacher/classes/{classroom.json()['id']}/review-suggestions")
+        assert suggestions.status_code==200
+        assert suggestions.json()["source"]=="local_ai"
+        assert suggestions.json()["suggestions"]
+        assert "student_id" not in str(suggestions.json())
+        assert student.get(f"/api/teacher/classes/{classroom.json()['id']}/review-suggestions").status_code==401
+
+
+def test_review_suggestions_are_class_scoped_and_require_two_errors(tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "DB_PATH", tmp_path / "v22_scope.sqlite3")
+    monkeypatch.setattr(main, "public_status", lambda: {"configured": False})
+    with TestClient(main.app) as teacher, TestClient(main.app) as student:
+        teacher.post("/api/auth/register-teacher",json={"email":"scope22teacher@example.test",
+            "password":"TeacherPass123!","display_name":"Teacher"})
+        classroom=teacher.post("/api/classes",json={"name":"Private Class"}).json()
+        student.post("/api/classes/join",json={"join_code":classroom["join_code"],"display_name":"Student",
+            "email":"scope22student@example.test","password":"StudentPass123!"})
+        result=teacher.get(f"/api/teacher/classes/{classroom['id']}/review-suggestions")
+        assert result.status_code==200
+        assert result.json()["suggestions"]==[]
+        assert teacher.get("/api/teacher/classes/not-owned/review-suggestions").status_code==404
