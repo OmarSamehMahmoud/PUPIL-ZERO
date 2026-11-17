@@ -218,3 +218,112 @@ async def generate_formative_quiz(lesson: dict[str, Any], count: int = 3) -> lis
 def uuid_token() -> str:
     import secrets
     return secrets.token_hex(4)
+
+
+async def generate_learning_feedback(lesson: dict[str, Any], incorrect_items: list[dict[str, str]]) -> list[dict[str, str]]:
+    """Create private, low-stakes alternative explanations without student identifiers."""
+    import json
+    cfg = provider_settings()
+    if cfg["provider"] not in {"ollama", "openai-compatible"} or not cfg["model"]:
+        raise RuntimeError("A configured local AI provider and model are required")
+    safe_items = [{
+        "question_id": item["question_id"], "concept_id": item["concept_id"],
+        "question": item["question"], "selected_answer": item["selected_answer"],
+        "correct_answer": item["correct_answer"], "authored_explanation": item["authored_explanation"],
+        "concept_explanation": item["concept_explanation"],
+    } for item in incorrect_items]
+    prompt = (
+        "For each incorrect practice answer, write supportive Egyptian Arabic feedback. "
+        "Do not shame, label, diagnose, infer ability, or say the learner has a misconception. "
+        "Acknowledge the selected answer neutrally, explain the idea in a different simple way, "
+        "and give one short practice prompt without its answer. Use only the supplied lesson facts. "
+        "Return JSON only: {\"feedback\":[{\"question_id\":str,\"feedback\":str,"
+        "\"alternative_explanation\":str,\"practice_prompt\":str}]}. Include every question_id exactly once. "
+        "Each text must be concise.\nDATA:\n" +
+        json.dumps({"lesson": lesson.get("title_ar"), "items": safe_items}, ensure_ascii=False)
+    )
+    messages = [{"role":"system","content":"You are a careful learning-support writer. Return valid JSON only."},
+                {"role":"user","content":prompt}]
+    timeout = httpx.Timeout(90.0, connect=5.0)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        if cfg["provider"] == "ollama":
+            response = await client.post(f"{cfg['base_url']}/api/chat",
+                json={"model":cfg["model"],"messages":messages,"stream":False,"format":"json",
+                      "options":{"temperature":0.25}})
+            response.raise_for_status()
+            raw = response.json().get("message",{}).get("content","")
+        else:
+            headers = {"Authorization":f"Bearer {cfg['api_key']}"} if cfg["api_key"] else {}
+            response = await client.post(f"{cfg['base_url']}/v1/chat/completions",headers=headers,
+                json={"model":cfg["model"],"messages":messages,"temperature":0.25,
+                      "response_format":{"type":"json_object"}})
+            response.raise_for_status()
+            choices=response.json().get("choices",[])
+            raw=choices[0].get("message",{}).get("content","") if choices else ""
+    try:
+        parsed=json.loads(str(raw).strip())
+        feedback=parsed.get("feedback") if isinstance(parsed,dict) else None
+    except (TypeError,ValueError) as exc:
+        raise RuntimeError("Local AI returned invalid feedback JSON") from exc
+    expected={item["question_id"] for item in safe_items}
+    if not isinstance(feedback,list) or {x.get("question_id") for x in feedback if isinstance(x,dict)} != expected:
+        raise RuntimeError("Local AI feedback did not match the submitted questions")
+    clean=[]
+    for item in feedback:
+        row={"question_id":item["question_id"]}
+        for key in ("feedback","alternative_explanation","practice_prompt"):
+            value=item.get(key)
+            if not isinstance(value,str) or not 5 <= len(value.strip()) <= 500:
+                raise RuntimeError("Local AI feedback failed validation")
+            row[key]=value.strip()
+        clean.append(row)
+    return clean
+
+
+async def generate_teacher_review_suggestions(lesson: dict[str, Any], patterns: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """Generate class-level review ideas from anonymous aggregated answer counts."""
+    import json
+    cfg=provider_settings()
+    if cfg["provider"] not in {"ollama","openai-compatible"} or not cfg["model"]:
+        raise RuntimeError("A configured local AI provider and model are required")
+    prompt=("Create one practical teacher-led review activity per supplied concept, in Egyptian Arabic. "
+        "Use only supplied lesson facts. Do not diagnose students or claim mastery. "
+        "Return JSON only: {\"suggestions\":[{\"concept_id\":str,\"activity\":str,"
+        "\"teacher_question\":str}]}. Preserve every concept_id exactly once.\nDATA:\n"+
+        json.dumps({"lesson":lesson.get("title_ar"),"patterns":patterns},ensure_ascii=False))
+    messages=[{"role":"system","content":"You are a cautious teaching assistant. Return valid JSON only."},
+              {"role":"user","content":prompt}]
+    timeout=httpx.Timeout(90.0,connect=5.0)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        if cfg["provider"]=="ollama":
+            response=await client.post(f"{cfg['base_url']}/api/chat",
+                json={"model":cfg["model"],"messages":messages,"stream":False,"format":"json",
+                      "options":{"temperature":0.2}})
+            response.raise_for_status()
+            raw=response.json().get("message",{}).get("content","")
+        else:
+            headers={"Authorization":f"Bearer {cfg['api_key']}"} if cfg["api_key"] else {}
+            response=await client.post(f"{cfg['base_url']}/v1/chat/completions",headers=headers,
+                json={"model":cfg["model"],"messages":messages,"temperature":0.2,
+                      "response_format":{"type":"json_object"}})
+            response.raise_for_status()
+            choices=response.json().get("choices",[])
+            raw=choices[0].get("message",{}).get("content","") if choices else ""
+    try:
+        parsed=json.loads(str(raw).strip())
+        rows=parsed.get("suggestions") if isinstance(parsed,dict) else None
+    except (TypeError,ValueError) as exc:
+        raise RuntimeError("Local AI returned invalid teacher suggestions JSON") from exc
+    expected={item["concept_id"] for item in patterns}
+    if not isinstance(rows,list) or {x.get("concept_id") for x in rows if isinstance(x,dict)} != expected:
+        raise RuntimeError("Local AI teacher suggestions did not match the requested concepts")
+    result=[]
+    for row in rows:
+        item={"concept_id":row["concept_id"]}
+        for key in ("activity","teacher_question"):
+            value=row.get(key)
+            if not isinstance(value,str) or not 8 <= len(value.strip()) <= 600:
+                raise RuntimeError("Local AI teacher suggestion failed validation")
+            item[key]=value.strip()
+        result.append(item)
+    return result
