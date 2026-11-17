@@ -787,6 +787,12 @@ def test_student_gets_private_alternative_feedback_and_teacher_aggregate(tmp_pat
         assert submitted.status_code==200
         assert submitted.json()["feedback_source"]=="local_ai"
         assert all("learning_feedback" in d for d in submitted.json()["details"] if not d["correct"])
+        second_quiz=student.post("/api/student/quizzes",json={"lesson_id":"fractions"}).json()
+        second_answers={}
+        for q in second_quiz["questions"]:
+            original=next(x for x in questions if x["id"]==q["id"])
+            second_answers[q["id"]]=next(o["id"] for o in original["options"] if o["id"]!=original["correct_option"])
+        assert student.post(f"/api/student/quizzes/{second_quiz['quiz_id']}/submit",json={"answers":second_answers}).status_code==200
         suggestions=teacher.get(f"/api/teacher/classes/{classroom.json()['id']}/review-suggestions")
         assert suggestions.status_code==200
         assert suggestions.json()["source"]=="local_ai"
