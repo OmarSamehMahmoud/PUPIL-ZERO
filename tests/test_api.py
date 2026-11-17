@@ -760,6 +760,10 @@ def test_student_gets_private_alternative_feedback_and_teacher_aggregate(tmp_pat
     async def fake_teacher(lesson, patterns):
         return [{"concept_id":item["concept_id"],"activity":"اعرض نموذجًا بصريًا وقارن بين طريقتين.",
                  "teacher_question":"كيف نعرف حجم الجزء عندما يزيد عدد الأجزاء؟"} for item in patterns]
+    async def fake_quiz(lesson, count=3):
+        from app.learning_engine import get_quiz_questions
+        return get_quiz_questions(lesson["id"])[:count]
+    monkeypatch.setattr(main, "generate_formative_quiz", fake_quiz)
     monkeypatch.setattr(main, "generate_learning_feedback", fake_generate)
     monkeypatch.setattr(main, "generate_teacher_review_suggestions", fake_teacher)
     with TestClient(main.app) as teacher, TestClient(main.app) as student:
