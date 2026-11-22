@@ -27,10 +27,11 @@ from app.pedagogy import advance_state, initial_state, state_context
 from app.teacher_intelligence import build_review_priorities
 from app.learning_engine import build_study_plan, get_quiz_questions, grade_quiz, validate_question_set
 from app.progress_analytics import build_quiz_learning_analytics
+from app.teacher_copilot import build_teacher_copilot
 
 ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = ROOT / "pupil_zero.db"
-app = FastAPI(title="PUPIL ZERO", version="2.6.0", description="Local-first learning-by-teaching MVP")
+app = FastAPI(title="PUPIL ZERO", version="2.7.0", description="Local-first learning-by-teaching MVP")
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
 
@@ -1889,7 +1890,7 @@ def teacher_session_detail(session_id: str, teacher: dict[str,Any] = Depends(cur
 
 @app.get("/api/health")
 def health() -> dict[str, Any]:
-    return {"status": "ok", "product": "PUPIL ZERO", "version": "2.6.0", **public_status()}
+    return {"status": "ok", "product": "PUPIL ZERO", "version": "2.7.0", **public_status()}
 
 
 @app.get("/api/lessons")
@@ -2143,3 +2144,54 @@ def teacher_student_learning_analytics(student_id: str, class_id: str = Query(..
         raise HTTPException(404, "Student not found in this class")
     analytics = _quiz_analytics_for_student(student_id, class_id=class_id, lesson_id=lesson_id)
     return {"student_id": student_id, "class_id": class_id, **analytics}
+
+
+# v2.7: explainable teacher copilot grounded in recorded formative answers.
+@app.get("/api/teacher/classes/{class_id}/teacher-copilot")
+def teacher_copilot(class_id: str, lesson_id: str | None = Query(default=None),
+                    teacher: dict[str, Any] = Depends(current_teacher)) -> dict[str, Any]:
+    with db() as con:
+        classroom = con.execute(
+            "SELECT id,name FROM classes WHERE id=? AND teacher_id=?",
+            (class_id, teacher["id"]),
+        ).fetchone()
+        if not classroom:
+            raise HTTPException(404, "Class not found")
+        query = """SELECT q.lesson_id,q.submitted_at,q.result_json
+                   FROM student_quizzes q
+                   JOIN class_members m ON m.student_id=q.student_id
+                   WHERE m.class_id=? AND q.submitted_at IS NOT NULL"""
+        params: list[Any] = [class_id]
+        if lesson_id:
+            if not get_lesson(lesson_id):
+                raise HTTPException(404, "Lesson not found")
+            query += " AND q.lesson_id=?"
+            params.append(lesson_id)
+        query += " ORDER BY q.submitted_at DESC LIMIT 500"
+        rows = con.execute(query, tuple(params)).fetchall()
+    grouped: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        try:
+            result = json.loads(row["result_json"] or "{}")
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if not isinstance(result, dict):
+            continue
+        grouped.setdefault(row["lesson_id"], []).append({
+            "lesson_id": row["lesson_id"],
+            "submitted_at": row["submitted_at"],
+            "result": result,
+        })
+    lesson_reports = []
+    for current_lesson_id, attempts in grouped.items():
+        lesson = get_lesson(current_lesson_id)
+        if lesson:
+            lesson_reports.append(build_teacher_copilot(lesson, attempts))
+    lesson_reports.sort(key=lambda item: item["lesson"])
+    return {
+        "class_id": class_id,
+        "class_name": classroom["name"],
+        "lessons": lesson_reports,
+        "suggestion_count": sum(len(item["suggestions"]) for item in lesson_reports),
+        "notice": "تُعرض أدلة إجابات مجمّعة دون أسماء الطلاب. راجع سياق الأسئلة والإجابات قبل اعتماد أي نشاط.",
+    }
