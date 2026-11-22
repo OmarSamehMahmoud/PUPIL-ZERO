@@ -840,3 +840,24 @@ def test_open_response_analysis_is_private_lesson_scoped_and_has_authored_fallba
         assert student.post("/api/student/open-response",json={"lesson_id":"fractions","answer":"قصير"}).status_code==422
         assert teacher.post("/api/student/open-response",json={"lesson_id":"fractions",
             "answer":"البسط والمقام أجزاء متساوية"}).status_code==401
+
+
+def test_open_response_rejects_unverifiable_model_quotes_and_uses_labelled_fallback(tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "DB_PATH", tmp_path / "v23_invalid_quote.sqlite3")
+    monkeypatch.setattr(main, "public_status", lambda: {"configured": True})
+    async def invalid_analysis(lesson, answer):
+        return [{"concept_id":lesson["concepts"][0]["id"],"status":"evidence_found",
+                 "evidence_quote":"هذه العبارة غير موجودة","interpretation":"دليل",
+                 "follow_up_question":"ممكن توضح أكتر؟"}]
+    monkeypatch.setattr(main, "generate_open_response_analysis", invalid_analysis)
+    with TestClient(main.app) as student:
+        teacher = TestClient(main.app)
+        teacher.post("/api/auth/register-teacher", json={"email":"fallbackteacher@example.test",
+            "password":"TeacherPass123!","display_name":"Teacher"})
+        classroom=teacher.post("/api/classes",json={"name":"Fallback Class"}).json()
+        student.post("/api/classes/join",json={"join_code":classroom["join_code"],
+            "display_name":"Learner","email":"fallbackstudent@example.test","password":"StudentPass123!"})
+        response=student.post("/api/student/open-response",json={"lesson_id":"fractions",
+            "answer":"البسط والمقام أجزاء متساوية من نفس الحجم"})
+        assert response.status_code==200
+        assert response.json()["source"]=="authored_keyword_fallback"
