@@ -7,6 +7,15 @@
 
 <section class="hub-card" id="learningEngine"><h2>مسار التعلم والاختبار التدريبي</h2><p class="muted">اقتراحات مراجعة مبنية على إشارات الشرح السابقة. الاختبار تدريبي وليس درجة مدرسية.</p><label for="engineLesson">اختار الدرس</label><select id="engineLesson"><option value="fractions">فهم الكسور</option><option value="decimals">الأعداد العشرية</option><option value="ratio">النسبة والتناسب</option></select><button id="loadPlan" type="button">اعرض مسار المراجعة</button><div id="planSteps"></div><button id="startQuiz" type="button">ابدأ اختبارًا قصيرًا</button><form id="quizForm" hidden><div id="quizQuestions"></div><button type="submit">صحّح إجاباتي</button></form><div id="quizResult" aria-live="polite"></div><div id="quizHistory"></div></section>
 
+<section class="hub-card" id="openResponsePanel">
+<h2>اشرح الفكرة بكلماتك</h2>
+<p class="muted">اكتب شرحًا قصيرًا، وسيعرض النظام إشارات مرتبطة بمفاهيم الدرس وأسئلة متابعة ومسار تدريب مقترح.</p>
+<label for="openResponseLesson">الدرس</label>
+<select id="openResponseLesson"><option value="fractions">فهم الكسور</option><option value="decimals">الأعداد العشرية</option><option value="ratio">النسبة والتناسب</option></select>
+<textarea id="openResponseAnswer" maxlength="2000" minlength="8" placeholder="اكتب شرحك هنا..." style="width:100%;min-height:110px;margin:10px 0"></textarea>
+<button id="analyzeOpenResponse" type="button">حلّل الشرح واقترح تدريبًا</button>
+<p id="openResponseStatus" class="muted" role="status"></p><div id="openResponseResult"></div>
+</section>
 <p class="muted">المعلومات المعروضة هي سجلات تشغيلية مقدمة من المدرسة، وليست درجات أو تقييمًا معتمدًا للإتقان.</p><footer><a href="/account">الحسابات</a> · <a href="/parent">بوابة ولي الأمر</a></footer></main>
 <script>
 const $=id=>document.getElementById(id);async function get(url){const r=await fetch(url);const d=await r.json();if(!r.ok)throw new Error(d.detail||'تعذر تحميل البيانات');return d}
@@ -14,6 +23,32 @@ function add(root,title,detail,button){const box=document.createElement('div');b
 async function load(){try{const me=await get('/api/auth/me');if(me.user.role!=='student')throw new Error('سجّل الدخول بحساب طالب لعرض هذه الصفحة');$('welcome').textContent='مرحبًا '+me.user.display_name;const d=await get('/api/student/dashboard');$('timetable').innerHTML='';d.timetable.forEach(x=>add($('timetable'),['الإثنين','الثلاثاء','الأربعاء','الخميس','الجمعة','السبت','الأحد'][x.day_of_week]+' · '+x.start_time+'–'+x.end_time,x.class_name+' · '+x.subject_name+' · '+x.teacher_name));if(!d.timetable.length)add($('timetable'),'لا يوجد جدول منشور','سيظهر جدولك هنا عند ربط فصلك بجدول المدرسة.');$('assignments').innerHTML='';d.assignments.forEach(x=>add($('assignments'),x.title+' · '+(x.submitted?'تم التسليم':'مطلوب'),x.class_name+' · '+(x.due_at||'لا يوجد موعد تسليم')));if(!d.assignments.length)add($('assignments'),'لا توجد واجبات','ستظهر الواجبات الجديدة هنا.');$('attendance').innerHTML='';d.attendance.forEach(x=>add($('attendance'),x.attendance_date+' · '+x.status,x.class_name));if(!d.attendance.length)add($('attendance'),'لا يوجد سجل حضور','لم تُسجل حالات حضور بعد.');$('notifications').innerHTML='';d.notifications.forEach(x=>{const b=document.createElement('button');b.className='ghost';b.textContent=x.read_at?'مقروء':'تحديد كمقروء';b.onclick=async()=>{await fetch('/api/notifications/'+encodeURIComponent(x.id)+'/read',{method:'POST'});load()};add($('notifications'),x.title,x.body+' · '+x.created_at,b)});if(!d.notifications.length)add($('notifications'),'لا توجد إشعارات','ستظهر الواجبات وتحديثات الحضور هنا.')}catch(e){$('welcome').textContent=e.message}}
 load();
 
+$('analyzeOpenResponse').onclick=async()=>{
+ const status=$('openResponseStatus'),root=$('openResponseResult'),answer=$('openResponseAnswer').value.trim();
+ root.innerHTML='';status.textContent='جاري تحليل الإجابة...';
+ try{
+  const response=await fetch('/api/student/open-response',{method:'POST',headers:{'Content-Type':'application/json'},
+   body:JSON.stringify({lesson_id:$('openResponseLesson').value,answer})});
+  const data=await response.json();if(!response.ok)throw new Error(data.detail||'تعذر تحليل الإجابة');
+  status.textContent=(data.source==='local_ai'?'تحليل بالنموذج المحلي':'إشارات كلمات مكتوبة مسبقًا')+' · '+data.notice;
+  data.signals.forEach(signal=>{
+   const card=document.createElement('div');card.className='hub-item';
+   const title=document.createElement('strong');title.textContent=signal.concept_id+' · '+(signal.status==='evidence_found'?'ظهر تعبير مرتبط':'محتاجين توضيح أكتر');
+   const quote=document.createElement('p');quote.className='muted';quote.textContent=signal.evidence_quote?'الدليل من إجابتك: «'+signal.evidence_quote+'»':signal.interpretation;
+   const follow=document.createElement('p');follow.textContent=signal.follow_up_question;
+   card.append(title,quote,follow);root.append(card);
+  });
+  const heading=document.createElement('h3');heading.textContent='مسار تدريب مقترح';root.append(heading);
+  data.suggested_path.forEach(step=>{
+   const card=document.createElement('div');card.className='hub-item';
+   const title=document.createElement('strong');title.textContent=step.step+'. '+step.concept;
+   const action=document.createElement('p');action.textContent=step.action;
+   const hint=document.createElement('p');hint.className='muted';hint.textContent=step.authored_hint;
+   card.append(title,action,hint);root.append(card);
+  });
+  const note=document.createElement('p');note.className='muted';note.textContent=data.privacy;root.append(note);
+ }catch(error){status.textContent=error.message}
+};
 let activeQuiz=null;
 $('loadPlan').onclick=async()=>{try{const id=$('engineLesson').value;const d=await get('/api/student/study-plan/'+encodeURIComponent(id));$('planSteps').innerHTML='';d.steps.forEach((s,i)=>{const label=s.priority==='practice'?'ابدأ من هنا':s.priority==='review'?'مراجعة':'تحدّي إضافي';add($('planSteps'),(i+1)+'. '+s.concept+' · '+label,s.activity+' · إشارات سابقة: '+s.evidence_sessions)});const note=document.createElement('p');note.className='muted';note.textContent=d.basis;$('planSteps').append(note)}catch(e){$('planSteps').textContent=e.message}};
 $('startQuiz').onclick=async()=>{try{activeQuiz=await fetch('/api/student/quizzes',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({lesson_id:$('engineLesson').value})}).then(async r=>{const d=await r.json();if(!r.ok)throw new Error(d.detail||'تعذر بدء الاختبار');return d});$('quizQuestions').innerHTML='';activeQuiz.questions.forEach((q,i)=>{const wrap=document.createElement('fieldset');const legend=document.createElement('legend');legend.textContent=(i+1)+'. '+q.prompt;wrap.append(legend);q.options.forEach(o=>{const label=document.createElement('label');const radio=document.createElement('input');radio.type='radio';radio.name=q.id;radio.value=o.id;label.append(radio,document.createTextNode(' '+o.text));wrap.append(label,document.createElement('br'))});$('quizQuestions').append(wrap)});$('quizForm').hidden=false;$('quizResult').textContent=activeQuiz.notice+' '+(activeQuiz.generation_notice||'')}catch(e){$('quizResult').textContent=e.message}};
