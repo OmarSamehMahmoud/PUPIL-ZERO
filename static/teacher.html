@@ -12,6 +12,16 @@
 </section>
 <section class="detail" id="assignmentsPanel"><h2>الواجبات ومتابعة التسليم</h2><form id="assignmentForm" class="plan-actions"><select id="assignmentClass" required><option value="">اختار الفصل</option></select><input id="assignmentTitle" placeholder="عنوان الواجب" minlength="2" maxlength="120" required><select id="assignmentLesson"><option value="fractions">فهم الكسور</option><option value="decimals">الأعداد العشرية</option><option value="ratio">النسبة والتناسب</option></select><input id="assignmentDue" type="datetime-local"><textarea id="assignmentDescription" maxlength="1500" placeholder="تعليمات الواجب (اختياري)"></textarea><button class="plan-button" type="submit">نشر الواجب</button></form><p id="assignmentStatus" class="muted" role="status"></p><div id="assignmentList" class="session-list"></div></section><section class="detail" id="dailyOperations"><h2>حصصي اليومية والحضور</h2><p class="muted">الجدول يعرض الحصص المسندة إليك داخل مدرسة مرتبطة. تسجيل الحضور متاح فقط لفصولك المسندة داخل المدرسة.</p><div id="teacherTimetable" class="session-list"></div><form id="teacherAttendanceForm" class="plan-actions"><select id="teacherAttendanceClass" required><option value="">اختر الفصل</option></select><select id="teacherAttendanceStudent" required><option value="">اختر الطالب</option></select><input id="teacherAttendanceDate" type="date" required><select id="teacherAttendanceStatus"><option value="present">حاضر</option><option value="absent">غائب</option><option value="late">متأخر</option><option value="excused">بعذر</option></select><button class="plan-button">حفظ الحضور</button></form><p id="teacherAttendanceNotice" class="muted" role="status"></p></section>
 <section class="detail" id="progressPanel"><h2>متابعة تقدم الفصل</h2><button class="plan-button" id="loadProgress" type="button">تحديث تقرير الفصل</button><p class="muted" id="progressNotice">اختر فصلًا من القائمة بالأعلى لعرض ملخص متابعة الطلاب.</p><div class="session-list" id="progressList"></div></section>
+
+<section class="detail" id="teacherCopilotPanel">
+ <h2>مساعد المدرّس المبني على الأدلة · v2.7</h2>
+ <p class="muted">يربط أنماط الإجابات المسجلة بالمتطلبات السابقة المؤلفة في خريطة المفاهيم، ويقترح نشاط مراجعة. لا يشخّص الطلاب ولا يقيس الإتقان.</p>
+ <div class="plan-actions"><label for="copilotLesson">الدرس</label>
+ <select id="copilotLesson"><option value="">كل الدروس</option><option value="fractions">فهم الكسور</option><option value="decimals">الأعداد العشرية</option><option value="ratio">النسبة والتناسب</option></select>
+ <button class="plan-button" id="loadTeacherCopilot" type="button">تحليل الأدلة</button></div>
+ <p class="muted" id="copilotNotice" role="status">اختار فصلًا ثم حمّل الاقتراحات.</p>
+ <div id="copilotSuggestions" class="session-list"></div>
+</section>
 <section class="detail" id="quizAnalyticsPanel">
  <h2>تحليلات محاولات الاختبارات · v2.6</h2>
  <p class="muted">سجل زمني للمحاولات وإشارات الإجابات على مستوى المفهوم. المقارنات وصفية فقط ولا تثبت الإتقان أو التحسن السببي.</p>
@@ -166,4 +176,44 @@ async function loadQuizAnalytics(){
  }catch(error){$('analyticsNotice').textContent=error.message;$('analyticsStudents').innerHTML='';$('analyticsStats').innerHTML=''}
 }
 $('loadQuizAnalytics').onclick=loadQuizAnalytics;
+
+/* v2.7 evidence-based teacher copilot */
+async function loadTeacherCopilot(){
+ const classId=$('classFilter').value,lessonId=$('copilotLesson').value,root=$('copilotSuggestions');
+ root.innerHTML='';
+ if(!classId){$('copilotNotice').textContent='اختار فصلًا أولًا.';return}
+ $('copilotNotice').textContent='جاري تجميع الأدلة المسجلة...';
+ try{
+  const url='/api/teacher/classes/'+encodeURIComponent(classId)+'/teacher-copilot'+(lessonId?'?lesson_id='+encodeURIComponent(lessonId):'');
+  const data=await get(url);
+  if(!data.suggestion_count){$('copilotNotice').textContent=data.class_name+' · لا توجد مفاهيم تجاوزت حد إجابتين غير صحيحتين مسجلتين.';return}
+  data.lessons.forEach(lesson=>{
+   lesson.suggestions.forEach(s=>{
+    const card=analyticsNode('article',undefined,'plan-step');
+    card.append(analyticsNode('h3',s.lesson+' · '+s.concept));
+    card.append(analyticsNode('p','الدليل: '+s.evidence.incorrect_answers+' إجابة غير صحيحة من '+s.evidence.recorded_answers+' إجابة مسجلة على المفهوم.'));
+    const prereq=s.authored_prerequisites.length?s.authored_prerequisites.map(x=>x.concept).join('، '):'لا توجد متطلبات سابقة محددة في خريطة المنهج.';
+    card.append(analyticsNode('p','متطلبات سابقة من خريطة المنهج: '+prereq));
+    card.append(analyticsNode('p','محور المراجعة المقترح: '+s.suggested_review_focus));
+    s.suggested_activity.steps.forEach(step=>card.append(analyticsNode('p',step.stage+' ('+step.duration_minutes+' دقائق): '+step.activity)));
+    const evidence=s.evidence.examples.map(x=>'سؤال '+x.question_id+' · '+(x.submitted_at||'تاريخ غير متاح')).join(' | ');
+    card.append(analyticsNode('p',evidence||'لا توجد تفاصيل أسئلة إضافية.','muted'));
+    const button=analyticsNode('button','إنشاء اقتراح للمراجعة (بانتظار موافقتك)','plan-button');button.type='button';
+    button.onclick=async()=>{
+     button.disabled=true;
+     try{
+      const response=await fetch('/api/teacher/learning-path-proposals',{method:'POST',headers:{'Content-Type':'application/json'},
+       body:JSON.stringify({class_id:classId,lesson_id:s.lesson_id,concept_id:s.concept_id,title:s.proposal_title,description:s.proposal_description})});
+      const result=await response.json();if(!response.ok)throw new Error(result.detail||'تعذر إنشاء الاقتراح');
+      button.textContent='تم إنشاء اقتراح Pending — راجعه في لوحة الموافقات';
+      await loadLearningProposals();
+     }catch(error){button.disabled=false;button.textContent=error.message}
+    };
+    card.append(button);root.append(card);
+   });
+  });
+  $('copilotNotice').textContent=data.class_name+' · '+data.suggestion_count+' اقتراحات · '+data.notice;
+ }catch(error){$('copilotNotice').textContent=error.message}
+}
+$('loadTeacherCopilot').onclick=loadTeacherCopilot;
 </script></body></html>
