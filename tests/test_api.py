@@ -1,6 +1,7 @@
 from datetime import date
 import sqlite3
 import json
+import json
 
 from fastapi.testclient import TestClient
 
@@ -974,3 +975,50 @@ def test_learning_analytics_is_student_private_and_teacher_class_scoped(tmp_path
         }).status_code == 201
         assert other_teacher.get(f"/api/teacher/classes/{class_id}/learning-analytics").status_code == 404
         assert other_teacher.get(f"/api/teacher/students/{student_id}/learning-analytics?class_id={class_id}").status_code == 404
+
+
+def test_teacher_copilot_is_class_scoped_and_creates_pending_proposal_only(tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "DB_PATH", tmp_path / "teacher_copilot.sqlite3")
+    with TestClient(main.app) as teacher, TestClient(main.app) as student, TestClient(main.app) as outsider:
+        assert teacher.post("/api/auth/register-teacher", json={
+            "email": "copilot-owner@example.test", "password": "StrongPass123!", "display_name": "Owner"
+        }).status_code == 201
+        classroom = teacher.post("/api/classes", json={"name": "Copilot Class"}).json()
+        joined = student.post("/api/classes/join", json={
+            "join_code": classroom["join_code"], "display_name": "Learner",
+            "email": "copilot-learner@example.test", "password": "StudentPass123!"
+        })
+        assert joined.status_code == 201
+        student_id = joined.json()["student"]["id"] if "student" in joined.json() else joined.json()["user"]["id"]
+        with main.db() as con:
+            for index in range(2):
+                con.execute(
+                    "INSERT INTO student_quizzes(id,student_id,lesson_id,questions_json,submitted_at,result_json) VALUES(?,?,?,?,?,?)",
+                    (f"copilot-quiz-{index}", student_id, "fractions", "[]",
+                     f"2026-11-2{index} 10:00:00", json.dumps({"details": [{
+                         "question_id": f"q{index}", "concept_id": "unit_fraction",
+                         "correct": False, "selected_option": "a", "correct_option": "b"
+                     }]})),
+                )
+        url = f"/api/teacher/classes/{classroom['id']}/teacher-copilot"
+        response = teacher.get(url)
+        assert response.status_code == 200
+        report = response.json()
+        assert report["suggestion_count"] == 1
+        suggestion = report["lessons"][0]["suggestions"][0]
+        assert suggestion["evidence"]["incorrect_answers"] == 2
+        assert suggestion["authored_prerequisites"][0]["concept_id"] == "numerator_denominator"
+        assert outsider.post("/api/auth/register-teacher", json={
+            "email": "copilot-outsider@example.test", "password": "StrongPass123!", "display_name": "Outsider"
+        }).status_code == 201
+        assert outsider.get(url).status_code == 404
+
+        proposal = teacher.post("/api/teacher/learning-path-proposals", json={
+            "class_id": classroom["id"], "lesson_id": suggestion["lesson_id"],
+            "concept_id": suggestion["concept_id"], "title": suggestion["proposal_title"],
+            "description": suggestion["proposal_description"],
+        })
+        assert proposal.status_code == 201
+        assert proposal.json()["status"] == "pending"
+        assert teacher.get("/api/teacher/assignments").json()["assignments"] == []
+        assert student.get("/api/student/assignments").json()["assignments"] == []
