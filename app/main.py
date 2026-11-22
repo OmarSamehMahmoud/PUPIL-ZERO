@@ -26,10 +26,11 @@ from app.learning_journey import build_learning_journey
 from app.pedagogy import advance_state, initial_state, state_context
 from app.teacher_intelligence import build_review_priorities
 from app.learning_engine import build_study_plan, get_quiz_questions, grade_quiz, validate_question_set
+from app.progress_analytics import build_quiz_learning_analytics
 
 ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = ROOT / "pupil_zero.db"
-app = FastAPI(title="PUPIL ZERO", version="2.4.0", description="Local-first learning-by-teaching MVP")
+app = FastAPI(title="PUPIL ZERO", version="2.5.0", description="Local-first learning-by-teaching MVP")
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
 
@@ -1888,7 +1889,7 @@ def teacher_session_detail(session_id: str, teacher: dict[str,Any] = Depends(cur
 
 @app.get("/api/health")
 def health() -> dict[str, Any]:
-    return {"status": "ok", "product": "PUPIL ZERO", "version": "1.4.0", **public_status()}
+    return {"status": "ok", "product": "PUPIL ZERO", "version": "2.5.0", **public_status()}
 
 
 @app.get("/api/lessons")
@@ -2056,3 +2057,89 @@ def finish_session(payload: FinishRequest, request: Request) -> dict[str, Any]:
         "lesson": lesson["title_ar"],
         "mode": public_status()["mode"],
     }
+
+
+# v2.5: longitudinal quiz evidence. These are descriptive practice records,
+# not grades, diagnoses, or validated mastery measurements.
+def _quiz_analytics_for_student(student_id: str, class_id: str | None = None,
+                                lesson_id: str | None = None) -> dict[str, Any]:
+    query = """SELECT lesson_id,submitted_at,result_json
+               FROM student_quizzes WHERE student_id=? AND submitted_at IS NOT NULL"""
+    params: list[Any] = [student_id]
+    if lesson_id:
+        query += " AND lesson_id=?"
+        params.append(lesson_id)
+    if class_id:
+        query += """ AND EXISTS (
+            SELECT 1 FROM class_members m WHERE m.student_id=student_quizzes.student_id
+            AND m.class_id=?)"""
+        params.append(class_id)
+    query += " ORDER BY submitted_at ASC,id ASC LIMIT 1000"
+    with db() as con:
+        rows = con.execute(query, tuple(params)).fetchall()
+    return build_quiz_learning_analytics([dict(row) for row in rows])
+
+
+@app.get("/api/student/learning-analytics")
+def student_learning_analytics(lesson_id: str | None = Query(default=None),
+                               student: dict[str, Any] = Depends(current_student)) -> dict[str, Any]:
+    if lesson_id and not get_lesson(lesson_id):
+        raise HTTPException(404, "Lesson not found")
+    return _quiz_analytics_for_student(student["id"], lesson_id=lesson_id)
+
+
+@app.get("/api/teacher/classes/{class_id}/learning-analytics")
+def teacher_class_learning_analytics(class_id: str,
+                                     lesson_id: str | None = Query(default=None),
+                                     teacher: dict[str, Any] = Depends(current_teacher)) -> dict[str, Any]:
+    if lesson_id and not get_lesson(lesson_id):
+        raise HTTPException(404, "Lesson not found")
+    with db() as con:
+        classroom = con.execute(
+            "SELECT id,name FROM classes WHERE id=? AND teacher_id=?",
+            (class_id, teacher["id"]),
+        ).fetchone()
+        if not classroom:
+            raise HTTPException(404, "Class not found")
+        students = con.execute(
+            """SELECT u.id,u.display_name FROM class_members m
+               JOIN users u ON u.id=m.student_id
+               WHERE m.class_id=? ORDER BY u.display_name""",
+            (class_id,),
+        ).fetchall()
+    results = []
+    for item in students:
+        analytics = _quiz_analytics_for_student(item["id"], class_id=class_id, lesson_id=lesson_id)
+        results.append({
+            "student_id": item["id"],
+            "display_name": item["display_name"],
+            "analytics": analytics,
+        })
+    totals = [entry["analytics"]["attempt_count"] for entry in results]
+    return {
+        "class_id": class_id,
+        "class_name": classroom["name"],
+        "student_count": len(results),
+        "students_with_attempts": sum(value > 0 for value in totals),
+        "attempt_count": sum(totals),
+        "students": results,
+        "notice": "يعرض هذا التقرير محاولات الاختبارات التدريبية المسجلة فقط. النسب وصفية ولا تثبت الإتقان أو التحسن السببي؛ اختلاف الأسئلة وعدد المحاولات قد يؤثر في المقارنة.",
+    }
+
+
+@app.get("/api/teacher/students/{student_id}/learning-analytics")
+def teacher_student_learning_analytics(student_id: str, class_id: str = Query(...),
+                                       lesson_id: str | None = Query(default=None),
+                                       teacher: dict[str, Any] = Depends(current_teacher)) -> dict[str, Any]:
+    if lesson_id and not get_lesson(lesson_id):
+        raise HTTPException(404, "Lesson not found")
+    with db() as con:
+        membership = con.execute(
+            """SELECT 1 FROM class_members m JOIN classes c ON c.id=m.class_id
+               WHERE m.student_id=? AND m.class_id=? AND c.teacher_id=?""",
+            (student_id, class_id, teacher["id"]),
+        ).fetchone()
+    if not membership:
+        raise HTTPException(404, "Student not found in this class")
+    analytics = _quiz_analytics_for_student(student_id, class_id=class_id, lesson_id=lesson_id)
+    return {"student_id": student_id, "class_id": class_id, **analytics}

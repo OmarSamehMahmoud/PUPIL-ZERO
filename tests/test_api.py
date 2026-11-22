@@ -1,5 +1,6 @@
 from datetime import date
 import sqlite3
+import json
 
 from fastapi.testclient import TestClient
 
@@ -918,3 +919,58 @@ def test_rejected_proposal_never_creates_assignment_and_other_teacher_cannot_rev
         rejected=owner.post(f"/api/teacher/learning-path-proposals/{proposal['id']}/reject")
         assert rejected.status_code==200
         assert owner.get("/api/teacher/assignments").json()["assignments"]==[]
+
+
+
+def test_learning_analytics_is_student_private_and_teacher_class_scoped(tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "DB_PATH", tmp_path / "analytics.sqlite3")
+    with TestClient(main.app) as teacher, TestClient(main.app) as student, TestClient(main.app) as other_teacher:
+        assert teacher.post("/api/auth/register-teacher", json={
+            "email": "analytics-teacher@example.test", "password": "StrongPass123!", "display_name": "Teacher"
+        }).status_code == 201
+        classroom = teacher.post("/api/classes", json={"name": "Analytics Class"})
+        class_id = classroom.json()["id"]
+        joined = student.post("/api/classes/join", json={
+            "join_code": classroom.json()["join_code"], "display_name": "Learner",
+            "email": "analytics-student@example.test", "password": "StudentPass123!"
+        })
+        assert joined.status_code == 201
+        student_id = joined.json()["student"]["id"] if "student" in joined.json() else joined.json()["user"]["id"]
+
+        with main.db() as con:
+            con.execute(
+                "INSERT INTO student_quizzes(id,student_id,lesson_id,questions_json,submitted_at,result_json) VALUES(?,?,?,?,CURRENT_TIMESTAMP,?)",
+                ("quiz-analytics-1", student_id, "fractions", "[]", json.dumps({
+                    "score": 1, "total": 2, "percentage": 50,
+                    "details": [
+                        {"question_id": "q1", "concept_id": "numerator_denominator", "correct": True},
+                        {"question_id": "q2", "concept_id": "unit_fraction", "correct": False},
+                    ],
+                })),
+            )
+            con.execute(
+                "INSERT INTO student_quizzes(id,student_id,lesson_id,questions_json,submitted_at,result_json) VALUES(?,?,?,?,?,?)",
+                ("quiz-analytics-2", student_id, "fractions", "[]", "2026-11-20 10:00:00", json.dumps({
+                    "score": 2, "total": 2, "percentage": 100,
+                    "details": [
+                        {"question_id": "q1", "concept_id": "numerator_denominator", "correct": True},
+                        {"question_id": "q2", "concept_id": "unit_fraction", "correct": True},
+                    ],
+                })),
+            )
+
+        assert student.get("/api/student/learning-analytics").status_code == 200
+        own = student.get("/api/student/learning-analytics").json()
+        assert own["attempt_count"] == 2
+        assert own["question_count"] == 4
+        assert teacher.get(f"/api/teacher/classes/{class_id}/learning-analytics").status_code == 200
+        class_report = teacher.get(f"/api/teacher/classes/{class_id}/learning-analytics").json()
+        assert class_report["student_count"] == 1
+        assert class_report["students"][0]["analytics"]["attempt_count"] == 2
+        assert teacher.get(f"/api/teacher/students/{student_id}/learning-analytics?class_id={class_id}").status_code == 200
+
+        assert other_teacher.post("/api/auth/register-teacher", json={
+            "email": "other-analytics@example.test", "password": "StrongPass123!", "display_name": "Other"
+        }).status_code == 201
+        assert other_teacher.get(f"/api/teacher/classes/{class_id}/learning-analytics").status_code == 404
+        assert other_teacher.get(f"/api/teacher/students/{student_id}/learning-analytics?class_id={class_id}").status_code == 404
