@@ -814,3 +814,29 @@ def test_review_suggestions_are_class_scoped_and_require_two_errors(tmp_path, mo
         assert result.status_code==200
         assert result.json()["suggestions"]==[]
         assert teacher.get("/api/teacher/classes/not-owned/review-suggestions").status_code==404
+
+
+def test_open_response_analysis_is_private_lesson_scoped_and_has_authored_fallback(tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "DB_PATH", tmp_path / "v23_open_response.sqlite3")
+    monkeypatch.setattr(main, "public_status", lambda: {"configured": False})
+    with TestClient(main.app) as teacher, TestClient(main.app) as student:
+        teacher.post("/api/auth/register-teacher", json={
+            "email":"v23teacher@example.test","password":"TeacherPass123!","display_name":"Teacher"})
+        classroom=teacher.post("/api/classes",json={"name":"V23 Class"}).json()
+        joined=student.post("/api/classes/join",json={"join_code":classroom["join_code"],
+            "display_name":"Learner","email":"v23student@example.test","password":"StudentPass123!"})
+        assert joined.status_code==201
+        response=student.post("/api/student/open-response",json={"lesson_id":"fractions",
+            "answer":"البسط والمقام بيوضحوا أجزاء متساوية من نفس الحجم"})
+        assert response.status_code==200
+        data=response.json()
+        assert data["source"]=="authored_keyword_signal"
+        assert any(x["concept_id"]=="numerator_denominator" and x["status"]=="evidence_found" for x in data["signals"])
+        assert len(data["suggested_path"])==3
+        assert "ليست تشخيصًا" in data["notice"]
+        assert "student_id" not in str(data) and "Learner" not in str(data)
+        assert student.post("/api/student/open-response",json={"lesson_id":"not-a-lesson",
+            "answer":"شرح طويل بما يكفي"}).status_code==404
+        assert student.post("/api/student/open-response",json={"lesson_id":"fractions","answer":"قصير"}).status_code==422
+        assert teacher.post("/api/student/open-response",json={"lesson_id":"fractions",
+            "answer":"البسط والمقام أجزاء متساوية"}).status_code==401
