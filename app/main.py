@@ -1889,7 +1889,7 @@ def teacher_session_detail(session_id: str, teacher: dict[str,Any] = Depends(cur
 
 @app.get("/api/health")
 def health() -> dict[str, Any]:
-    return {"status": "ok", "product": "PUPIL ZERO", "version": "1.4.0", **public_status()}
+    return {"status": "ok", "product": "PUPIL ZERO", "version": "2.5.0", **public_status()}
 
 
 @app.get("/api/lessons")
