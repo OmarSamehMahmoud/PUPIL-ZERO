@@ -842,13 +842,11 @@ def test_open_response_analysis_is_private_lesson_scoped_and_has_authored_fallba
             "answer":"البسط والمقام أجزاء متساوية"}).status_code==401
 
 
-def test_open_response_rejects_unverifiable_model_quotes_and_uses_labelled_fallback(tmp_path, monkeypatch):
+def test_open_response_model_failure_uses_labelled_keyword_fallback(tmp_path, monkeypatch):
     monkeypatch.setattr(main, "DB_PATH", tmp_path / "v23_invalid_quote.sqlite3")
     monkeypatch.setattr(main, "public_status", lambda: {"configured": True})
     async def invalid_analysis(lesson, answer):
-        return [{"concept_id":lesson["concepts"][0]["id"],"status":"evidence_found",
-                 "evidence_quote":"هذه العبارة غير موجودة","interpretation":"دليل",
-                 "follow_up_question":"ممكن توضح أكتر؟"}]
+        raise RuntimeError("Model output failed evidence validation")
     monkeypatch.setattr(main, "generate_open_response_analysis", invalid_analysis)
     with TestClient(main.app) as student:
         teacher = TestClient(main.app)
