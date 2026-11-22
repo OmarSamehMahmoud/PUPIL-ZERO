@@ -859,3 +859,62 @@ def test_open_response_model_failure_uses_labelled_keyword_fallback(tmp_path, mo
             "answer":"البسط والمقام أجزاء متساوية من نفس الحجم"})
         assert response.status_code==200
         assert response.json()["source"]=="authored_keyword_fallback"
+
+
+def test_learning_graph_is_authored_and_teacher_owned(tmp_path, monkeypatch):
+    monkeypatch.setattr(main,"DB_PATH",tmp_path/"v24_graph.sqlite3")
+    with TestClient(main.app) as teacher, TestClient(main.app) as outsider:
+        teacher.post("/api/auth/register-teacher",json={"email":"graphowner@example.test",
+            "password":"TeacherPass123!","display_name":"Owner"})
+        outsider.post("/api/auth/register-teacher",json={"email":"graphother@example.test",
+            "password":"TeacherPass123!","display_name":"Other"})
+        classroom=teacher.post("/api/classes",json={"name":"Graph Class"}).json()
+        graph=teacher.get(f"/api/teacher/classes/{classroom['id']}/learning-graph?lesson_id=fractions")
+        assert graph.status_code==200
+        data=graph.json()
+        assert {"from":"numerator_denominator","to":"unit_fraction","type":"prerequisite",
+                "source":"curriculum_author"} in data["edges"]
+        assert outsider.get(f"/api/teacher/classes/{classroom['id']}/learning-graph?lesson_id=fractions").status_code==404
+        assert teacher.get(f"/api/teacher/classes/{classroom['id']}/learning-graph?lesson_id=unknown").status_code==404
+
+
+def test_learning_path_proposal_requires_teacher_approval_before_assignment(tmp_path, monkeypatch):
+    monkeypatch.setattr(main,"DB_PATH",tmp_path/"v24_approval.sqlite3")
+    with TestClient(main.app) as teacher, TestClient(main.app) as student:
+        teacher.post("/api/auth/register-teacher",json={"email":"approveowner@example.test",
+            "password":"TeacherPass123!","display_name":"Owner"})
+        classroom=teacher.post("/api/classes",json={"name":"Approval Class"}).json()
+        student.post("/api/classes/join",json={"join_code":classroom["join_code"],
+            "display_name":"Learner","email":"approvelearner@example.test","password":"StudentPass123!"})
+        body={"class_id":classroom["id"],"lesson_id":"fractions","concept_id":"unit_fraction",
+              "title":"Review unit fractions","description":"Practice with visual examples"}
+        proposal=teacher.post("/api/teacher/learning-path-proposals",json=body)
+        assert proposal.status_code==201
+        proposal_id=proposal.json()["id"]
+        assert proposal.json()["status"]=="pending"
+        assert teacher.get("/api/teacher/assignments").json()["assignments"]==[]
+        assert student.get("/api/student/assignments").json()["assignments"]==[]
+        assert teacher.post("/api/teacher/learning-path-proposals",json={**body,"concept_id":"not-in-lesson"}).status_code==422
+        approved=teacher.post(f"/api/teacher/learning-path-proposals/{proposal_id}/approve")
+        assert approved.status_code==200
+        assert approved.json()["status"]=="approved"
+        assert len(student.get("/api/student/assignments").json()["assignments"])==1
+        assert teacher.post(f"/api/teacher/learning-path-proposals/{proposal_id}/approve").status_code==409
+        assert teacher.post(f"/api/teacher/learning-path-proposals/{proposal_id}/reject").status_code==409
+
+
+def test_rejected_proposal_never_creates_assignment_and_other_teacher_cannot_review(tmp_path, monkeypatch):
+    monkeypatch.setattr(main,"DB_PATH",tmp_path/"v24_reject.sqlite3")
+    with TestClient(main.app) as owner, TestClient(main.app) as other:
+        owner.post("/api/auth/register-teacher",json={"email":"rejectowner@example.test",
+            "password":"TeacherPass123!","display_name":"Owner"})
+        other.post("/api/auth/register-teacher",json={"email":"rejectother@example.test",
+            "password":"TeacherPass123!","display_name":"Other"})
+        classroom=owner.post("/api/classes",json={"name":"Reject Class"}).json()
+        body={"class_id":classroom["id"],"lesson_id":"ratio","concept_id":"equivalent_ratio",
+              "title":"Ratio practice","description":"Use equivalent ratios"}
+        proposal=owner.post("/api/teacher/learning-path-proposals",json=body).json()
+        assert other.post(f"/api/teacher/learning-path-proposals/{proposal['id']}/approve").status_code==404
+        rejected=owner.post(f"/api/teacher/learning-path-proposals/{proposal['id']}/reject")
+        assert rejected.status_code==200
+        assert owner.get("/api/teacher/assignments").json()["assignments"]==[]
