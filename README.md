@@ -1,6 +1,6 @@
 # PUPIL ZERO
 
-**Prototype version: 2.8.0**
+**Prototype version: 2.9.0**
 
 **Teach an AI. Discover what you really know.**
 
@@ -18,6 +18,7 @@ PUPIL ZERO is an Arabic-first, learning-by-teaching prototype. A learner explain
 - Student progress endpoint summarizing their own sessions, lessons visited, and longitudinal concept keyword signals; optional class filter is restricted to their memberships.
 - Teacher class progress dashboard with per-student session counts, lessons visited, and evidence-signal summaries; individual progress is available only when the student belongs to a class owned by that teacher.
 - Parent accounts can only be created from a teacher-issued, single-use guardian invitation tied to a specific student and class; invitations expire after seven days.
+- Evolving AI Classmates (v2.9): MILO, NOURA, and ZIZO now have distinct, explicit teaching behaviors; each student's companion journey advances through transparent stages and optional challenges as completed conversation turns accumulate. The student hub displays unlocked journey badges and the next milestone. Progress is based only on completed student/companion exchanges, is account-scoped, and is explicitly not a measure of intelligence, personality, engagement quality, or mastery. Persona and stage guidance is supplied to the configured local model; distinct authored fallback replies remain available without a model.
 - Private Student Learning Companion (v2.8): each authenticated student can choose one of three classmate personas and a learning style, start/resume conversations, and keep a private conversation history tied to their account. Uses the configured local model when available; otherwise clearly labels deterministic guidance as fallback. Known account display name/email and common email/phone patterns are redacted from companion messages before a model call. Companion history is not shared with teachers or other students by these APIs.
 - Evidence-Based Teacher Copilot (v2.7): aggregates repeated incorrect formative-quiz answers at class level, links the concept to authored prerequisite metadata, and presents a lesson-authored review activity with traceable question evidence. Teachers can create a pending learning-path proposal from the suggestion; existing approval workflow is required before any student assignment is created. No student names are sent to an LLM, and the deterministic signals are not diagnoses or mastery estimates.
 - Interactive teacher quiz-analytics dashboard (v2.6): class-scoped student list, attempt/question summary cards, lesson filter, per-student chronological percentage chart, and concept-level recorded-answer history. Uses the existing teacher-authorized analytics APIs; the view is descriptive and does not label learners as mastered, weak, or diagnosed.
