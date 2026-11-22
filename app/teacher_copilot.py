@@ -28,7 +28,7 @@ def build_teacher_copilot(lesson: dict[str, Any], quiz_rows: list[dict[str, Any]
             if not isinstance(detail, dict):
                 continue
             concept_id = detail.get("concept_id")
-            if concept_id not in concepts or not isinstance(detail.get("correct"), bool):
+            if not isinstance(concept_id, str) or concept_id not in concepts or not isinstance(detail.get("correct"), bool):
                 continue
             bucket = counts[concept_id]
             bucket["attempts"] += 1
