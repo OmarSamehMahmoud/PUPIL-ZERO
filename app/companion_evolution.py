@@ -88,5 +88,23 @@ def companion_evolution_guidance(style: str, persona: str, exchange_count: int) 
     return companion_guidance(style) + "\n" + persona_guidance(persona, exchange_count)
 
 
+def count_completed_exchanges(transcripts: list[str]) -> int:
+    """Count complete student/companion turns from locally stored transcripts."""
+    import json
+
+    total = 0
+    for raw in transcripts:
+        try:
+            messages = json.loads(raw or "[]")
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if not isinstance(messages, list):
+            continue
+        student_turns = sum(1 for item in messages if isinstance(item, dict) and item.get("role") == "student")
+        companion_turns = sum(1 for item in messages if isinstance(item, dict) and item.get("role") == "ai")
+        total += min(student_turns, companion_turns)
+    return total
+
+
 def persona_fallback_reply(persona: str) -> str:
     return PERSONAS.get(persona, PERSONAS["milo"])["fallback"]
