@@ -29,7 +29,7 @@ from app.learning_engine import build_study_plan, get_quiz_questions, grade_quiz
 
 ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = ROOT / "pupil_zero.db"
-app = FastAPI(title="PUPIL ZERO", version="2.3.0", description="Local-first learning-by-teaching MVP")
+app = FastAPI(title="PUPIL ZERO", version="2.4.0", description="Local-first learning-by-teaching MVP")
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
 
@@ -121,6 +121,14 @@ class SchoolAttendanceRequest(BaseModel):
     student_id: str = Field(min_length=1, max_length=64)
     attendance_date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
     status: str = Field(pattern=r"^(present|absent|late|excused)$")
+
+class LearningPathProposalRequest(BaseModel):
+    class_id: str = Field(min_length=1, max_length=64)
+    lesson_id: str = Field(min_length=1, max_length=64)
+    concept_id: str = Field(min_length=1, max_length=80)
+    title: str = Field(min_length=2, max_length=120)
+    description: str = Field(default="", max_length=1500)
+
 
 class OpenResponseRequest(BaseModel):
     lesson_id: str = Field(min_length=1, max_length=64)
@@ -215,6 +223,14 @@ def init_db() -> None:
             class_id TEXT NOT NULL REFERENCES classes(id), title TEXT NOT NULL,
             description TEXT NOT NULL DEFAULT '', lesson_id TEXT NOT NULL,
             due_at TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )""")
+        con.execute("""CREATE TABLE IF NOT EXISTS learning_path_proposals (
+            id TEXT PRIMARY KEY, teacher_id TEXT NOT NULL REFERENCES users(id),
+            class_id TEXT NOT NULL REFERENCES classes(id), lesson_id TEXT NOT NULL,
+            concept_id TEXT NOT NULL, title TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending','approved','rejected')),
+            assignment_id TEXT REFERENCES assignments(id), reviewed_at TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         )""")
         con.execute("""CREATE TABLE IF NOT EXISTS parent_accounts (
             id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, display_name TEXT NOT NULL,
@@ -482,6 +498,129 @@ def join_class(payload: StudentJoinRequest, response: Response) -> dict[str,Any]
         con.execute("INSERT INTO auth_sessions(token_hash,user_id,expires_at) VALUES(?,?,?)",(token_digest(token),student_id,int(time.time())+604800))
     response.set_cookie("pupil_session",token,httponly=True,samesite="strict",max_age=604800,path="/")
     return {"student":{"id":student_id,"display_name":payload.display_name.strip()},"class":{"id":classroom["id"],"name":classroom["name"]}}
+
+@app.get("/api/teacher/classes/{class_id}/learning-graph")
+def teacher_learning_graph(class_id: str, lesson_id: str = Query(...), teacher: dict[str,Any] = Depends(current_teacher)) -> dict[str,Any]:
+    lesson = get_lesson(lesson_id)
+    if not lesson:
+        raise HTTPException(404, "Lesson not found")
+    with db() as con:
+        classroom = con.execute("SELECT id,name FROM classes WHERE id=? AND teacher_id=?",
+                                (class_id,teacher["id"])).fetchone()
+    if not classroom:
+        raise HTTPException(404,"Class not found")
+    concepts = lesson.get("concepts",[])
+    known = {item["id"] for item in concepts}
+    nodes = [{"id":item["id"],"label":item["label_ar"],"description":item.get("correction","")}
+             for item in concepts]
+    edges = []
+    for item in concepts:
+        for prerequisite in item.get("prerequisites",[]):
+            if prerequisite not in known:
+                raise HTTPException(500,"Curriculum graph contains an unknown prerequisite")
+            edges.append({"from":prerequisite,"to":item["id"],"type":"prerequisite",
+                          "source":"curriculum_author"})
+    return {"class_id":class_id,"class_name":classroom["name"],"lesson_id":lesson_id,
+            "lesson":lesson["title_ar"],"nodes":nodes,"edges":edges,
+            "notice":"العلاقات مكتوبة في محتوى الدرس بواسطة المؤلف، وليست مستنتجة من نموذج الذكاء الاصطناعي. راجعها قبل استخدامها."}
+
+
+@app.post("/api/teacher/learning-path-proposals",status_code=201)
+def create_learning_path_proposal(payload: LearningPathProposalRequest,
+                                  teacher: dict[str,Any] = Depends(current_teacher)) -> dict[str,Any]:
+    lesson=get_lesson(payload.lesson_id)
+    if not lesson:
+        raise HTTPException(404,"Lesson not found")
+    concept=next((item for item in lesson.get("concepts",[]) if item["id"]==payload.concept_id),None)
+    if not concept:
+        raise HTTPException(422,"Concept does not belong to this lesson")
+    proposal_id=str(uuid.uuid4())
+    with db() as con:
+        classroom=con.execute("SELECT id FROM classes WHERE id=? AND teacher_id=?",
+                              (payload.class_id,teacher["id"])).fetchone()
+        if not classroom:
+            raise HTTPException(404,"Class not found")
+        con.execute("""INSERT INTO learning_path_proposals
+            (id,teacher_id,class_id,lesson_id,concept_id,title,description)
+            VALUES(?,?,?,?,?,?,?)""",
+            (proposal_id,teacher["id"],payload.class_id,payload.lesson_id,payload.concept_id,
+             payload.title.strip(),payload.description.strip()))
+    return {"id":proposal_id,"status":"pending","concept":concept["label_ar"],
+            "notice":"الاقتراح محفوظ للمراجعة فقط. لم يتم إنشاء واجب أو إرسال إشعار للطلاب."}
+
+
+@app.get("/api/teacher/learning-path-proposals")
+def list_learning_path_proposals(class_id: str | None = Query(default=None),
+                                 teacher: dict[str,Any] = Depends(current_teacher)) -> dict[str,Any]:
+    with db() as con:
+        query="SELECT p.*,c.name AS class_name FROM learning_path_proposals p JOIN classes c ON c.id=p.class_id WHERE p.teacher_id=?"
+        params=[teacher["id"]]
+        if class_id:
+            if not con.execute("SELECT 1 FROM classes WHERE id=? AND teacher_id=?",(class_id,teacher["id"])).fetchone():
+                raise HTTPException(404,"Class not found")
+            query+=" AND p.class_id=?"
+            params.append(class_id)
+        query+=" ORDER BY CASE p.status WHEN 'pending' THEN 0 ELSE 1 END,p.created_at DESC"
+        rows=con.execute(query,tuple(params)).fetchall()
+    results=[]
+    for row in rows:
+        lesson=get_lesson(row["lesson_id"])
+        concept=next((x for x in lesson.get("concepts",[]) if x["id"]==row["concept_id"]),None) if lesson else None
+        results.append({**dict(row),"concept":concept["label_ar"] if concept else row["concept_id"]})
+    return {"proposals":results}
+
+
+@app.post("/api/teacher/learning-path-proposals/{proposal_id}/approve")
+def approve_learning_path_proposal(proposal_id: str,
+                                   teacher: dict[str,Any] = Depends(current_teacher)) -> dict[str,Any]:
+    with db() as con:
+        proposal=con.execute("SELECT * FROM learning_path_proposals WHERE id=? AND teacher_id=?",
+                             (proposal_id,teacher["id"])).fetchone()
+        if not proposal:
+            raise HTTPException(404,"Proposal not found")
+        if proposal["status"]!="pending":
+            raise HTTPException(409,"Proposal has already been reviewed")
+        lesson=get_lesson(proposal["lesson_id"])
+        concept=next((x for x in lesson.get("concepts",[]) if x["id"]==proposal["concept_id"]),None) if lesson else None
+        if not concept:
+            raise HTTPException(409,"The proposed curriculum concept is no longer available")
+        classroom=con.execute("SELECT id FROM classes WHERE id=? AND teacher_id=?",
+                              (proposal["class_id"],teacher["id"])).fetchone()
+        if not classroom:
+            raise HTTPException(404,"Class not found")
+        assignment_id=str(uuid.uuid4())
+        con.execute("""INSERT INTO assignments(id,teacher_id,class_id,title,description,lesson_id,due_at)
+            VALUES(?,?,?,?,?,?, '')""",(assignment_id,teacher["id"],proposal["class_id"],
+            proposal["title"],proposal["description"],proposal["lesson_id"]))
+        changed=con.execute("""UPDATE learning_path_proposals SET status='approved',
+            assignment_id=?,reviewed_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'""",
+            (assignment_id,proposal_id)).rowcount
+        if changed!=1:
+            raise HTTPException(409,"Proposal has already been reviewed")
+        members=con.execute("SELECT student_id FROM class_members WHERE class_id=?",
+                            (proposal["class_id"],)).fetchall()
+        for member in members:
+            con.execute("""INSERT INTO user_notifications(id,recipient_id,recipient_role,kind,title,body)
+                VALUES(?,?,'student','assignment','New assignment',?)""",
+                (str(uuid.uuid4()),member["student_id"],proposal["title"]))
+    return {"proposal_id":proposal_id,"status":"approved","assignment_id":assignment_id,
+            "notified_students":len(members),"notice":"اعتمد المدرّس الاقتراح وتم إنشاء الواجب وإرسال الإشعارات."}
+
+
+@app.post("/api/teacher/learning-path-proposals/{proposal_id}/reject")
+def reject_learning_path_proposal(proposal_id: str,
+                                  teacher: dict[str,Any] = Depends(current_teacher)) -> dict[str,Any]:
+    with db() as con:
+        proposal=con.execute("SELECT id,status FROM learning_path_proposals WHERE id=? AND teacher_id=?",
+                             (proposal_id,teacher["id"])).fetchone()
+        if not proposal:
+            raise HTTPException(404,"Proposal not found")
+        if proposal["status"]!="pending":
+            raise HTTPException(409,"Proposal has already been reviewed")
+        con.execute("UPDATE learning_path_proposals SET status='rejected',reviewed_at=CURRENT_TIMESTAMP WHERE id=? AND status='pending'",
+                    (proposal_id,))
+    return {"proposal_id":proposal_id,"status":"rejected","notice":"تم رفض الاقتراح. لم يتم إنشاء واجب."}
+
 
 @app.post("/api/teacher/assignments", status_code=201)
 def create_assignment(payload: AssignmentCreateRequest, teacher: dict[str,Any] = Depends(current_teacher)) -> dict[str,Any]:
