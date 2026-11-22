@@ -9,6 +9,7 @@
 .companion-controls label{display:flex;flex-direction:column;gap:6px}
 .companion-compose{display:flex;gap:8px;align-items:stretch}
 .companion-compose textarea{flex:1;min-height:76px}
+.companion-evolution{background:#11172d;border:1px solid var(--line);border-radius:12px;padding:14px;margin:12px 0}.companion-evolution progress{width:100%;height:10px;accent-color:var(--cyan)}.companion-badges{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.companion-badge{border:1px solid #4b4778;background:#29264a;border-radius:30px;padding:5px 10px;font-size:12px;color:#ddd7ff}
 </style></head>
 <body><main class="shell hub"><header class="topbar"><a class="brand" href="/">PUPIL<span>ZERO</span></a><span class="tag">STUDENT HUB</span><a href="/">ابدأ التعلم</a></header>
 <section class="hero-copy"><p class="eyebrow">مساحتك التعليمية</p><h1>أهلاً بيك في يومك الدراسي</h1><p class="sub" id="welcome">جاري تحميل جدولك وواجباتك...</p></section>
@@ -35,6 +36,12 @@
  <button id="saveCompanionProfile" type="button">احفظ تفضيلاتي</button>
  <button id="newCompanionChat" class="ghost" type="button">محادثة جديدة</button>
  <p id="companionStatus" class="muted" role="status">جاري تحميل المرافق...</p>
+ <div id="companionEvolution" class="companion-evolution" aria-live="polite">
+  <strong id="companionStage">رحلة الزمالة</strong>
+  <p id="companionProgressText" class="muted">جاري تحميل تقدم الرحلة...</p>
+  <progress id="companionLevelProgress" max="4" value="1" aria-label="مستوى رحلة زميل التعلم"></progress>
+  <div id="companionBadges" class="companion-badges"></div>
+ </div>
  <div id="companionThread" class="companion-thread" aria-live="polite" aria-label="محادثة زميل التعلم"></div>
  <div class="companion-compose">
   <textarea id="companionMessage" maxlength="2000" placeholder="اكتب سؤالك أو اشرح الفكرة اللي بتتعلمها..."></textarea>
@@ -71,6 +78,18 @@ function renderCompanionTranscript(transcript){
  });
  root.scrollTop=root.scrollHeight;
 }
+function renderCompanionProgress(progress){
+ if(!progress)return;
+ $('companionStage').textContent='المستوى '+progress.level+' · '+progress.stage;
+ $('companionProgressText').textContent=progress.exchange_count+' محادثة مكتملة · '+
+  (progress.next_milestone===null?'وصلت لآخر مرحلة متاحة!':'متبقي '+progress.exchanges_to_next+' محادثات للمرحلة التالية')+
+  ' — '+progress.notice;
+ $('companionLevelProgress').value=progress.level;
+ const badges=$('companionBadges');badges.innerHTML='';
+ (progress.unlocked_badges||[]).forEach(label=>{
+  const badge=document.createElement('span');badge.className='companion-badge';badge.textContent='✦ '+label;badges.append(badge);
+ });
+}
 async function refreshCompanion(){
  const data=await get('/api/student/companion');
  $('companionPersona').value=data.profile.persona;
@@ -82,6 +101,7 @@ async function refreshCompanion(){
   option.textContent=item.title+' · '+item.lesson_id;history.append(option);
  });
  $('companionStatus').textContent=data.mode==='live_ai'?'الموديل المحلي متصل · '+data.privacy:'وضع الردود الإرشادية · فعّل Ollama لاستخدام المحادثة الذكية · '+data.privacy;
+ renderCompanionProgress(data.progress);
 }
 $('saveCompanionProfile').onclick=async()=>{
  try{
@@ -112,6 +132,7 @@ $('sendCompanionMessage').onclick=async()=>{
    body:JSON.stringify({text,lesson_id:$('companionLesson').value,conversation_id:companionConversationId})});
   const data=await response.json();if(!response.ok)throw new Error(data.detail||'تعذر إرسال الرسالة');
   companionConversationId=data.conversation_id;input.value='';renderCompanionTranscript(data.transcript);
+  renderCompanionProgress(data.progress);
   await refreshCompanion();$('companionHistory').value=companionConversationId;
   $('companionStatus').textContent=(data.mode==='live_ai'?'رد من الموديل المحلي':'رد إرشادي بدون موديل محلي')+' · '+data.notice;
  }catch(e){$('companionStatus').textContent=e.message}

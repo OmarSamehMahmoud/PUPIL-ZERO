@@ -29,10 +29,11 @@ from app.learning_engine import build_study_plan, get_quiz_questions, grade_quiz
 from app.progress_analytics import build_quiz_learning_analytics
 from app.teacher_copilot import build_teacher_copilot
 from app.student_companion import companion_guidance, redact_for_model, fallback_companion_reply
+from app.companion_evolution import build_companion_progress, companion_evolution_guidance, count_completed_exchanges, persona_fallback_reply
 
 ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = ROOT / "pupil_zero.db"
-app = FastAPI(title="PUPIL ZERO", version="2.8.0", description="Local-first learning-by-teaching platform with private student companion")
+app = FastAPI(title="PUPIL ZERO", version="2.9.0", description="Local-first learning-by-teaching platform with evolving private AI classmates")
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
 
@@ -798,6 +799,13 @@ def get_student_companion(student: dict[str, Any] = Depends(current_student)) ->
                ORDER BY updated_at DESC LIMIT 30""",
             (student["id"],),
         ).fetchall()
+        all_transcripts = con.execute(
+            "SELECT transcript_json FROM student_companion_conversations WHERE student_id=?",
+            (student["id"],),
+        ).fetchall()
+    progress = build_companion_progress(
+        count_completed_exchanges([row["transcript_json"] for row in all_transcripts])
+    )
     conversations = []
     for row in rows:
         try:
@@ -816,6 +824,12 @@ def get_student_companion(student: dict[str, Any] = Depends(current_student)) ->
         "profile": dict(profile) if profile else {"persona": "milo", "learning_style": "step_by_step"},
         "conversations": conversations,
         "mode": public_status()["mode"],
+        "progress": progress,
+        "persona_cards": [
+            {"id": "milo", "name": "MILO", "tagline": "المستكشف الفضولي"},
+            {"id": "noura", "name": "NOURA", "tagline": "صانعة الأمثلة"},
+            {"id": "zizo", "name": "ZIZO", "tagline": "محب التحديات"},
+        ],
         "privacy": "المحادثات محفوظة داخل حسابك فقط. لا تُرسل هوية الحساب أو تفضيلاته الخاصة إلى النموذج.",
     }
 
@@ -889,6 +903,13 @@ async def send_student_companion_message(payload: CompanionMessageRequest,
                    VALUES(?,?,?,?,?,'[]')""",
                 (conversation_id, student["id"], lesson_id, persona, style),
             )
+        exchange_rows = con.execute(
+            "SELECT transcript_json FROM student_companion_conversations WHERE student_id=?",
+            (student["id"],),
+        ).fetchall()
+    completed_before = count_completed_exchanges([row["transcript_json"] for row in exchange_rows])
+    exchange_count = completed_before + 1
+    progress = build_companion_progress(exchange_count)
     lesson = get_lesson(lesson_id)
     transcript.append({"role": "student", "text": text})
     status = public_status()
@@ -900,7 +921,7 @@ async def send_student_companion_message(payload: CompanionMessageRequest,
         try:
             reply = await generate_reply(
                 model_messages, lesson, persona,
-                companion_guidance(style),
+                companion_evolution_guidance(style, persona, exchange_count),
             )
         except Exception as exc:
             raise HTTPException(
@@ -909,7 +930,7 @@ async def send_student_companion_message(payload: CompanionMessageRequest,
             ) from exc
         mode = "live_ai"
     else:
-        reply = fallback_companion_reply(text, lesson["title_ar"], style)
+        reply = persona_fallback_reply(persona) + " " + fallback_companion_reply(text, lesson["title_ar"], style)
         mode = "demo_fallback"
     transcript.append({"role": "ai", "text": reply})
     with db() as con:
@@ -922,7 +943,9 @@ async def send_student_companion_message(payload: CompanionMessageRequest,
         "conversation_id": conversation_id, "lesson_id": lesson_id,
         "persona": persona, "learning_style": style, "reply": reply,
         "transcript": transcript, "mode": mode,
-        "notice": "المرافق أداة تدريب وممارسة، وليس مدرسًا أو تقييمًا معتمدًا. اسأل معلمك عند الشك.",
+        "progress": progress,
+        "notice": "المرافق أداة تدريب وممارسة، وليس مدرسًا أو تقييمًا معتمدًا. اسأل معلمك عند الشك. مستوى الرحلة يعتمد على عدد المحادثات المكتملة فقط.",
+
         "privacy": "حُفظت المحادثة داخل حسابك. أُزيلت بيانات الحساب المعروفة وبعض أنماط البريد والهاتف من النص المرسل للنموذج المحلي.",
     }
 
