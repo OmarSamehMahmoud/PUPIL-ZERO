@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PUPIL ZERO — Teacher Desk</title><link rel="stylesheet" href="/static/style.css"><style>
 .teacher-head{display:flex;justify-content:space-between;align-items:center;gap:16px;margin:32px 0}.teacher-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.plan-button{margin-top:10px;border:1px solid var(--cyan);background:#1c3550;color:white;padding:8px 12px;border-radius:9px;cursor:pointer}.plan-step{padding:12px;margin:10px 0;background:#222747;border-radius:10px}.plan-step h4{margin:0 0 6px}.plan-step p{margin:5px 0}.plan-actions{display:flex;gap:10px;flex-wrap:wrap}.stat,.session,.detail{background:#171b35;border:1px solid var(--line);border-radius:16px;padding:18px}.stat strong{display:block;font-size:32px;color:var(--cyan)}.session-list{display:grid;gap:10px;margin-top:18px}.session{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}.session button{border:1px solid var(--line);background:#282d50;color:white;padding:9px 14px;border-radius:10px;cursor:pointer}.detail{margin-top:18px;line-height:1.9}.transcript{display:grid;gap:8px;margin-top:12px}.transcript div{padding:10px 12px;border-radius:10px;background:#222747}.muted{color:var(--muted);font-size:12px}.warning{border:1px solid #755c2b;background:#342b18;color:#ffd27a;padding:12px;border-radius:12px;margin:18px 0}@media(max-width:650px){.teacher-grid{grid-template-columns:1fr}.teacher-head{align-items:flex-start;flex-direction:column}}
-</style></head><body><main class="shell"><header class="topbar"><a class="brand" href="/">PUPIL<span>ZERO</span></a><span class="tag">TEACHER DESK</span><a href="/">العودة للطالب</a></header><section class="teacher-head"><div><p class="eyebrow">متابعة التعلم</p><h1>لوحة المدرّس</h1><p class="muted">ملخص الجلسات وإشارات الشرح — راجع الحوار قبل أي استنتاج.</p></div><button class="primary" id="refresh">تحديث البيانات</button></section><div class="warning">لوحة محلية محمية بتسجيل دخول المدرّس. استخدم بيانات تجريبية فقط؛ ما زالت متطلبات الأمان والنشر المؤسسي قيد الاستكمال.</div><section class="detail"><label for="classFilter">تصفية حسب الفصل</label> <select id="classFilter"><option value="">كل فصولي</option></select><p class="muted">تُعرض الجلسات والتجميعات الخاصة بالفصول التي تملكها فقط.</p></section><section class="detail" id="learningGraphPanel">
+</style><style>.analytics-chart{width:100%;overflow-x:auto;margin:12px 0}.analytics-chart svg{min-width:320px;max-width:100%;height:auto;display:block}.analytics-lesson{border-top:1px solid var(--line);padding-top:12px;margin-top:14px}.analytics-lesson h4{margin:6px 0}</style></head><body><main class="shell"><header class="topbar"><a class="brand" href="/">PUPIL<span>ZERO</span></a><span class="tag">TEACHER DESK</span><a href="/">العودة للطالب</a></header><section class="teacher-head"><div><p class="eyebrow">متابعة التعلم</p><h1>لوحة المدرّس</h1><p class="muted">ملخص الجلسات وإشارات الشرح — راجع الحوار قبل أي استنتاج.</p></div><button class="primary" id="refresh">تحديث البيانات</button></section><div class="warning">لوحة محلية محمية بتسجيل دخول المدرّس. استخدم بيانات تجريبية فقط؛ ما زالت متطلبات الأمان والنشر المؤسسي قيد الاستكمال.</div><section class="detail"><label for="classFilter">تصفية حسب الفصل</label> <select id="classFilter"><option value="">كل فصولي</option></select><p class="muted">تُعرض الجلسات والتجميعات الخاصة بالفصول التي تملكها فقط.</p></section><section class="detail" id="learningGraphPanel">
 <h2>خريطة المفاهيم والعلاقات</h2><p class="muted">العلاقات محددة داخل محتوى الدرس، وليست استنتاجًا آليًا. اختر فصلًا ودرسًا لعرض المتطلبات السابقة.</p>
 <select id="graphLesson"><option value="fractions">فهم الكسور</option><option value="decimals">الأعداد العشرية</option><option value="ratio">النسبة والتناسب</option></select>
 <button class="plan-button" id="loadLearningGraph" type="button">عرض خريطة المفاهيم</button><div id="learningGraph" class="session-list" aria-live="polite"></div>
@@ -118,8 +118,8 @@ function renderStudentAnalyticsList(data){
   card.append(info,button);root.append(card);
  });
 }
-function renderTimelineChart(timeline){
- const root=$('analyticsTimeline');root.innerHTML='';
+function renderTimelineChart(root,timeline){
+ root.innerHTML='';
  if(!timeline.length){root.textContent='لا توجد محاولات مسجلة لهذا الطالب في الفلتر الحالي.';return}
  const ns='http://www.w3.org/2000/svg',svg=document.createElementNS(ns,'svg');
  svg.setAttribute('viewBox','0 0 640 230');svg.setAttribute('width','100%');svg.setAttribute('role','img');
@@ -134,18 +134,22 @@ function renderStudentAnalyticsDetail(student){
  const data=student.analytics,box=$('analyticsStudentDetail');box.hidden=false;
  $('analyticsStudentTitle').textContent='سجل محاولات · '+student.display_name;
  $('analyticsStudentSummary').textContent=data.attempt_count+' محاولة · '+data.question_count+' سؤال · '+(data.overall_accuracy_percentage===null?'لا توجد نسبة متاحة':data.overall_accuracy_percentage+'% إجابات صحيحة')+' — بيانات وصفية لا تمثل درجة أو تشخيصًا.';
- const lesson=data.lessons[0];
- renderTimelineChart(lesson?.timeline||[]);
  const root=$('analyticsConcepts');root.innerHTML='';
- if(!lesson||!lesson.concepts.length){root.textContent='لا توجد تفاصيل مفاهيم في المحاولات المسجلة.';return}
- lesson.concepts.forEach(concept=>{
-  const card=analyticsNode('div',undefined,'plan-step');
-  card.append(analyticsNode('strong',concept.concept_id));
-  card.append(analyticsNode('p','محاولات: '+concept.attempts+' · صحيحة: '+concept.correct+' · غير صحيحة: '+concept.incorrect+' · نسبة الإجابات الصحيحة: '+concept.accuracy_percentage+'%'));
-  const change=concept.change_between_first_and_latest;
-  const label=change==='correct_after_incorrect'?'آخر إجابة صحيحة بعد إجابة أولى غير صحيحة':change==='incorrect_after_correct'?'آخر إجابة غير صحيحة بعد إجابة أولى صحيحة':'لم يتغير وصف الإجابة بين أول وآخر تسجيل';
-  card.append(analyticsNode('p',label,'muted'));
-  root.append(card);
+ if(!data.lessons.length){root.textContent='لا توجد تفاصيل مفاهيم في المحاولات المسجلة.';box.scrollIntoView({behavior:'smooth',block:'start'});return}
+ data.lessons.forEach(lesson=>{
+  const section=analyticsNode('section',undefined,'analytics-lesson');
+  section.append(analyticsNode('h4',lesson.lesson_id+' · '+lesson.attempt_count+' محاولة'));
+  const chart=analyticsNode('div',undefined,'analytics-chart');chart.setAttribute('role','img');chart.setAttribute('aria-label','رسم زمني لنسب الإجابات الصحيحة في '+lesson.lesson_id);
+  renderTimelineChart(chart,lesson.timeline);section.append(chart);
+  lesson.concepts.forEach(concept=>{
+   const card=analyticsNode('div',undefined,'plan-step');
+   card.append(analyticsNode('strong',concept.concept_id));
+   card.append(analyticsNode('p','محاولات: '+concept.attempts+' · صحيحة: '+concept.correct+' · غير صحيحة: '+concept.incorrect+' · نسبة الإجابات الصحيحة: '+concept.accuracy_percentage+'%'));
+   const change=concept.change_between_first_and_latest;
+   const label=change==='correct_after_incorrect'?'آخر إجابة صحيحة بعد إجابة أولى غير صحيحة':change==='incorrect_after_correct'?'آخر إجابة غير صحيحة بعد إجابة أولى صحيحة':'لم يتغير وصف الإجابة بين أول وآخر تسجيل';
+   card.append(analyticsNode('p',label,'muted'));section.append(card);
+  });
+  root.append(section);
  });
  box.scrollIntoView({behavior:'smooth',block:'start'});
 }
