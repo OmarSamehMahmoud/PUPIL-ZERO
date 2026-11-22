@@ -28,10 +28,11 @@ from app.teacher_intelligence import build_review_priorities
 from app.learning_engine import build_study_plan, get_quiz_questions, grade_quiz, validate_question_set
 from app.progress_analytics import build_quiz_learning_analytics
 from app.teacher_copilot import build_teacher_copilot
+from app.student_companion import companion_guidance, redact_for_model, fallback_companion_reply
 
 ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = ROOT / "pupil_zero.db"
-app = FastAPI(title="PUPIL ZERO", version="2.7.0", description="Local-first learning-by-teaching MVP")
+app = FastAPI(title="PUPIL ZERO", version="2.8.0", description="Local-first learning-by-teaching platform with private student companion")
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
 
@@ -157,6 +158,19 @@ class InvitedTeacherRegisterRequest(BaseModel):
     email: str = Field(min_length=5, max_length=254)
     password: str = Field(min_length=10, max_length=128)
     display_name: str = Field(min_length=2, max_length=80)
+
+
+
+
+class CompanionMessageRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=2000)
+    lesson_id: str = Field(default="fractions", min_length=1, max_length=64)
+    conversation_id: str | None = Field(default=None, min_length=36, max_length=36)
+
+
+class CompanionProfileRequest(BaseModel):
+    persona: str = Field(default="milo", pattern="^(milo|noura|zizo)$")
+    learning_style: str = Field(default="step_by_step", pattern="^(step_by_step|example_first|quiz_me)$")
 
 
 class InterventionFeedbackRequest(BaseModel):
@@ -333,6 +347,23 @@ def init_db() -> None:
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         )""")
         con.execute("CREATE INDEX IF NOT EXISTS idx_student_quizzes_student ON student_quizzes(student_id,created_at)")
+
+        con.execute("""CREATE TABLE IF NOT EXISTS student_companion_profiles (
+            student_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+            persona TEXT NOT NULL DEFAULT 'milo' CHECK(persona IN ('milo','noura','zizo')),
+            learning_style TEXT NOT NULL DEFAULT 'step_by_step'
+                CHECK(learning_style IN ('step_by_step','example_first','quiz_me')),
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )""")
+        con.execute("""CREATE TABLE IF NOT EXISTS student_companion_conversations (
+            id TEXT PRIMARY KEY, student_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            lesson_id TEXT NOT NULL, persona TEXT NOT NULL,
+            learning_style TEXT NOT NULL, transcript_json TEXT NOT NULL DEFAULT '[]',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )""")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_companion_student_updated ON student_companion_conversations(student_id,updated_at)")
+
         con.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_school_teachers_single_school ON school_teachers(teacher_id)")
         con.execute("""CREATE TABLE IF NOT EXISTS school_teacher_invites (
             token_hash TEXT PRIMARY KEY, school_id TEXT NOT NULL REFERENCES schools(id),
@@ -749,6 +780,151 @@ async def analyze_student_open_response(payload: OpenResponseRequest,
                  "اقتباس الدليل يوضح ما استند إليه التحليل؛ راجع الشرح بنفسك أو مع المعلم. "
                  "المسار اقتراح تدريبي قابل للتغيير وليس ترتيب متطلبات أو واجبًا منشورًا.",
         "privacy":"لم تُرسل هوية الطالب أو بيانات حسابه إلى النموذج؛ أُرسل نص الإجابة وسياق الدرس فقط."}
+
+
+
+
+# v2.8: each signed-in learner has private companion preferences and conversations.
+@app.get("/api/student/companion")
+def get_student_companion(student: dict[str, Any] = Depends(current_student)) -> dict[str, Any]:
+    with db() as con:
+        profile = con.execute(
+            "SELECT persona,learning_style FROM student_companion_profiles WHERE student_id=?",
+            (student["id"],),
+        ).fetchone()
+        rows = con.execute(
+            """SELECT id,lesson_id,persona,learning_style,transcript_json,created_at,updated_at
+               FROM student_companion_conversations WHERE student_id=?
+               ORDER BY updated_at DESC LIMIT 30""",
+            (student["id"],),
+        ).fetchall()
+    conversations = []
+    for row in rows:
+        try:
+            transcript = json.loads(row["transcript_json"] or "[]")
+        except (TypeError, json.JSONDecodeError):
+            transcript = []
+        first_message = next((item.get("text", "") for item in transcript
+                              if item.get("role") == "student"), "")
+        conversations.append({
+            "conversation_id": row["id"], "lesson_id": row["lesson_id"],
+            "persona": row["persona"], "learning_style": row["learning_style"],
+            "title": first_message[:56] or get_lesson(row["lesson_id"])["title_ar"],
+            "created_at": row["created_at"], "updated_at": row["updated_at"],
+        })
+    return {
+        "profile": dict(profile) if profile else {"persona": "milo", "learning_style": "step_by_step"},
+        "conversations": conversations,
+        "mode": public_status()["mode"],
+        "privacy": "المحادثات محفوظة داخل حسابك فقط. لا تُرسل هوية الحساب أو تفضيلاته الخاصة إلى النموذج.",
+    }
+
+
+@app.put("/api/student/companion/profile")
+def update_student_companion_profile(payload: CompanionProfileRequest,
+                                     student: dict[str, Any] = Depends(current_student)) -> dict[str, Any]:
+    with db() as con:
+        con.execute(
+            """INSERT INTO student_companion_profiles(student_id,persona,learning_style)
+               VALUES(?,?,?) ON CONFLICT(student_id) DO UPDATE SET
+               persona=excluded.persona,learning_style=excluded.learning_style,
+               updated_at=CURRENT_TIMESTAMP""",
+            (student["id"], payload.persona, payload.learning_style),
+        )
+    return {"persona": payload.persona, "learning_style": payload.learning_style, "saved": True}
+
+
+@app.get("/api/student/companion/conversations/{conversation_id}")
+def get_student_companion_conversation(conversation_id: str,
+                                       student: dict[str, Any] = Depends(current_student)) -> dict[str, Any]:
+    with db() as con:
+        row = con.execute(
+            """SELECT id,lesson_id,persona,learning_style,transcript_json,created_at,updated_at
+               FROM student_companion_conversations WHERE id=? AND student_id=?""",
+            (conversation_id, student["id"]),
+        ).fetchone()
+    if not row:
+        raise HTTPException(404, "Conversation not found")
+    return {
+        "conversation_id": row["id"], "lesson_id": row["lesson_id"],
+        "persona": row["persona"], "learning_style": row["learning_style"],
+        "transcript": json.loads(row["transcript_json"] or "[]"),
+        "created_at": row["created_at"], "updated_at": row["updated_at"],
+    }
+
+
+@app.post("/api/student/companion/messages")
+async def send_student_companion_message(payload: CompanionMessageRequest,
+                                         student: dict[str, Any] = Depends(current_student)) -> dict[str, Any]:
+    text = payload.text.strip()
+    if not text:
+        raise HTTPException(422, "Message cannot be empty")
+    with db() as con:
+        profile = con.execute(
+            "SELECT persona,learning_style FROM student_companion_profiles WHERE student_id=?",
+            (student["id"],),
+        ).fetchone()
+        if payload.conversation_id:
+            row = con.execute(
+                """SELECT * FROM student_companion_conversations WHERE id=? AND student_id=?""",
+                (payload.conversation_id, student["id"]),
+            ).fetchone()
+            if not row:
+                raise HTTPException(404, "Conversation not found")
+            lesson_id, persona, style = row["lesson_id"], row["persona"], row["learning_style"]
+            conversation_id = row["id"]
+            transcript = json.loads(row["transcript_json"] or "[]")
+        else:
+            lesson_id = payload.lesson_id
+            lesson = get_lesson(lesson_id)
+            if not lesson:
+                raise HTTPException(404, "Lesson not found")
+            persona = profile["persona"] if profile else "milo"
+            style = profile["learning_style"] if profile else "step_by_step"
+            conversation_id = str(uuid.uuid4())
+            transcript = []
+            con.execute(
+                """INSERT INTO student_companion_conversations
+                   (id,student_id,lesson_id,persona,learning_style,transcript_json)
+                   VALUES(?,?,?,?,?,'[]')""",
+                (conversation_id, student["id"], lesson_id, persona, style),
+            )
+    lesson = get_lesson(lesson_id)
+    transcript.append({"role": "student", "text": text})
+    status = public_status()
+    if status["mode"] == "live_ai":
+        safe_transcript = redact_for_model(
+            transcript, [student.get("display_name", ""), student.get("email", "")]
+        )
+        model_messages = [{"role": item["role"], "text": item["text"]} for item in safe_transcript]
+        try:
+            reply = await generate_reply(
+                model_messages, lesson, persona,
+                companion_guidance(style),
+            )
+        except Exception as exc:
+            raise HTTPException(
+                503,
+                detail=f"Local AI is unavailable ({type(exc).__name__}). Check the configured model and try again.",
+            ) from exc
+        mode = "live_ai"
+    else:
+        reply = fallback_companion_reply(text, lesson["title_ar"], style)
+        mode = "demo_fallback"
+    transcript.append({"role": "ai", "text": reply})
+    with db() as con:
+        con.execute(
+            """UPDATE student_companion_conversations
+               SET transcript_json=?,updated_at=CURRENT_TIMESTAMP WHERE id=? AND student_id=?""",
+            (json.dumps(transcript, ensure_ascii=False), conversation_id, student["id"]),
+        )
+    return {
+        "conversation_id": conversation_id, "lesson_id": lesson_id,
+        "persona": persona, "learning_style": style, "reply": reply,
+        "transcript": transcript, "mode": mode,
+        "notice": "المرافق أداة تدريب وممارسة، وليس مدرسًا أو تقييمًا معتمدًا. اسأل معلمك عند الشك.",
+        "privacy": "حُفظت المحادثة داخل حسابك. أُزيلت بيانات الحساب المعروفة وبعض أنماط البريد والهاتف من النص المرسل للنموذج المحلي.",
+    }
 
 
 @app.post("/api/student/quizzes", status_code=201)
