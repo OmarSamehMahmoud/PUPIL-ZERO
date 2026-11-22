@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PUPIL ZERO — Teacher Desk</title><link rel="stylesheet" href="/static/style.css"><style>
 .teacher-head{display:flex;justify-content:space-between;align-items:center;gap:16px;margin:32px 0}.teacher-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}.plan-button{margin-top:10px;border:1px solid var(--cyan);background:#1c3550;color:white;padding:8px 12px;border-radius:9px;cursor:pointer}.plan-step{padding:12px;margin:10px 0;background:#222747;border-radius:10px}.plan-step h4{margin:0 0 6px}.plan-step p{margin:5px 0}.plan-actions{display:flex;gap:10px;flex-wrap:wrap}.stat,.session,.detail{background:#171b35;border:1px solid var(--line);border-radius:16px;padding:18px}.stat strong{display:block;font-size:32px;color:var(--cyan)}.session-list{display:grid;gap:10px;margin-top:18px}.session{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}.session button{border:1px solid var(--line);background:#282d50;color:white;padding:9px 14px;border-radius:10px;cursor:pointer}.detail{margin-top:18px;line-height:1.9}.transcript{display:grid;gap:8px;margin-top:12px}.transcript div{padding:10px 12px;border-radius:10px;background:#222747}.muted{color:var(--muted);font-size:12px}.warning{border:1px solid #755c2b;background:#342b18;color:#ffd27a;padding:12px;border-radius:12px;margin:18px 0}@media(max-width:650px){.teacher-grid{grid-template-columns:1fr}.teacher-head{align-items:flex-start;flex-direction:column}}
-</style></head><body><main class="shell"><header class="topbar"><a class="brand" href="/">PUPIL<span>ZERO</span></a><span class="tag">TEACHER DESK</span><a href="/">العودة للطالب</a></header><section class="teacher-head"><div><p class="eyebrow">متابعة التعلم</p><h1>لوحة المدرّس</h1><p class="muted">ملخص الجلسات وإشارات الشرح — راجع الحوار قبل أي استنتاج.</p></div><button class="primary" id="refresh">تحديث البيانات</button></section><div class="warning">لوحة محلية محمية بتسجيل دخول المدرّس. استخدم بيانات تجريبية فقط؛ ما زالت متطلبات الأمان والنشر المؤسسي قيد الاستكمال.</div><section class="detail"><label for="classFilter">تصفية حسب الفصل</label> <select id="classFilter"><option value="">كل فصولي</option></select><p class="muted">تُعرض الجلسات والتجميعات الخاصة بالفصول التي تملكها فقط.</p></section><section class="detail" id="learningGraphPanel">
+</style><style>.analytics-chart{width:100%;overflow-x:auto;margin:12px 0}.analytics-chart svg{min-width:320px;max-width:100%;height:auto;display:block}.analytics-lesson{border-top:1px solid var(--line);padding-top:12px;margin-top:14px}.analytics-lesson h4{margin:6px 0}</style></head><body><main class="shell"><header class="topbar"><a class="brand" href="/">PUPIL<span>ZERO</span></a><span class="tag">TEACHER DESK</span><a href="/">العودة للطالب</a></header><section class="teacher-head"><div><p class="eyebrow">متابعة التعلم</p><h1>لوحة المدرّس</h1><p class="muted">ملخص الجلسات وإشارات الشرح — راجع الحوار قبل أي استنتاج.</p></div><button class="primary" id="refresh">تحديث البيانات</button></section><div class="warning">لوحة محلية محمية بتسجيل دخول المدرّس. استخدم بيانات تجريبية فقط؛ ما زالت متطلبات الأمان والنشر المؤسسي قيد الاستكمال.</div><section class="detail"><label for="classFilter">تصفية حسب الفصل</label> <select id="classFilter"><option value="">كل فصولي</option></select><p class="muted">تُعرض الجلسات والتجميعات الخاصة بالفصول التي تملكها فقط.</p></section><section class="detail" id="learningGraphPanel">
 <h2>خريطة المفاهيم والعلاقات</h2><p class="muted">العلاقات محددة داخل محتوى الدرس، وليست استنتاجًا آليًا. اختر فصلًا ودرسًا لعرض المتطلبات السابقة.</p>
 <select id="graphLesson"><option value="fractions">فهم الكسور</option><option value="decimals">الأعداد العشرية</option><option value="ratio">النسبة والتناسب</option></select>
 <button class="plan-button" id="loadLearningGraph" type="button">عرض خريطة المفاهيم</button><div id="learningGraph" class="session-list" aria-live="polite"></div>
@@ -11,7 +11,26 @@
 <div id="learningProposals" class="session-list"></div>
 </section>
 <section class="detail" id="assignmentsPanel"><h2>الواجبات ومتابعة التسليم</h2><form id="assignmentForm" class="plan-actions"><select id="assignmentClass" required><option value="">اختار الفصل</option></select><input id="assignmentTitle" placeholder="عنوان الواجب" minlength="2" maxlength="120" required><select id="assignmentLesson"><option value="fractions">فهم الكسور</option><option value="decimals">الأعداد العشرية</option><option value="ratio">النسبة والتناسب</option></select><input id="assignmentDue" type="datetime-local"><textarea id="assignmentDescription" maxlength="1500" placeholder="تعليمات الواجب (اختياري)"></textarea><button class="plan-button" type="submit">نشر الواجب</button></form><p id="assignmentStatus" class="muted" role="status"></p><div id="assignmentList" class="session-list"></div></section><section class="detail" id="dailyOperations"><h2>حصصي اليومية والحضور</h2><p class="muted">الجدول يعرض الحصص المسندة إليك داخل مدرسة مرتبطة. تسجيل الحضور متاح فقط لفصولك المسندة داخل المدرسة.</p><div id="teacherTimetable" class="session-list"></div><form id="teacherAttendanceForm" class="plan-actions"><select id="teacherAttendanceClass" required><option value="">اختر الفصل</option></select><select id="teacherAttendanceStudent" required><option value="">اختر الطالب</option></select><input id="teacherAttendanceDate" type="date" required><select id="teacherAttendanceStatus"><option value="present">حاضر</option><option value="absent">غائب</option><option value="late">متأخر</option><option value="excused">بعذر</option></select><button class="plan-button">حفظ الحضور</button></form><p id="teacherAttendanceNotice" class="muted" role="status"></p></section>
-<section class="detail" id="progressPanel"><h2>متابعة تقدم الفصل</h2><button class="plan-button" id="loadProgress" type="button">تحديث تقرير الفصل</button><p class="muted" id="progressNotice">اختر فصلًا من القائمة بالأعلى لعرض ملخص متابعة الطلاب.</p><div class="session-list" id="progressList"></div></section><section class="teacher-grid"><div class="stat"><span class="muted">عدد الجلسات المعروضة</span><strong id="total">—</strong></div><div class="stat"><span class="muted">إجمالي إجابات الطلاب</span><strong id="turns">—</strong></div><div class="stat"><span class="muted">جلسات بها تفاعل</span><strong id="active">—</strong></div></section><section class="detail" id="reviewSuggestionsPanel"><h2>مقترحات مراجعة من إجابات الاختبارات</h2><p class="muted">تجميع إجابات على مستوى الفصل فقط. لا يعرض أسماء الطلاب ولا يقيس الإتقان.</p><label for="reviewClass">الفصل</label><select id="reviewClass"></select><button id="loadReviewSuggestions" type="button">تحميل المقترحات</button><div id="reviewSuggestions"></div></section><section class="detail" id="insightsPanel"><h2>مؤشرات على مستوى الفصل</h2><p class="muted">تجميع جلسات محلية حسب الدرس — ليست قياسًا للإتقان.</p><div id="insights"><p class="muted">جاري تجميع المؤشرات...</p></div></section><section class="detail" id="prioritiesPanel"><h2>أولويات إعادة الشرح</h2><p class="muted">اقتراحات للمراجعة البشرية، وليست تشخيصًا أو قياسًا للإتقان.</p><div id="priorities"><p class="muted">جاري التحميل...</p></div></section><section class="detail" id="interventionPanel" hidden><h2 id="planTitle">خطة إعادة الشرح المقترحة</h2><p class="muted" id="planNotice"></p><div id="planSteps"></div><div class="plan-step" id="feedbackBox"><h3>تقييم المدرّس للخطة</h3><p class="muted">شاركنا هل كانت الخطة مناسبة؟ التقييم اختياري ومرتبط بحساب المدرّس؛ الملاحظات لا تظهر في الملخصات، ولا يُستخدم التقييم للحكم على الطالب.</p><label><input type="radio" name="planRating" value="helpful"> مفيدة</label> <label><input type="radio" name="planRating" value="partly_helpful"> مفيدة جزئيًا</label> <label><input type="radio" name="planRating" value="not_helpful"> غير مفيدة</label><textarea id="feedbackNote" maxlength="500" placeholder="ملاحظة اختيارية (حتى 500 حرف)" style="width:100%;min-height:70px;margin-top:10px"></textarea><button class="plan-button" id="sendFeedback">حفظ التقييم</button><p class="muted" id="feedbackStatus" role="status"></p><div id="feedbackSummary" class="muted"></div></div><div class="plan-actions"><button class="plan-button" onclick="window.print()">طباعة الخطة</button><button class="plan-button" onclick="closePlan()">إغلاق</button></div></section><section><h2>الجلسات الأخيرة</h2><div id="sessions" class="session-list"><p class="muted">جاري التحميل...</p></div></section><section id="detail" class="detail" hidden><h2 id="detailTitle">تفاصيل الجلسة</h2><p id="detailMeta" class="muted"></p><div id="report"></div><h3>نص المحادثة</h3><div id="transcript" class="transcript"></div></section><footer>مؤشرات أولية للمراجعة البشرية · ليست درجات رسمية</footer></main><script>
+<section class="detail" id="progressPanel"><h2>متابعة تقدم الفصل</h2><button class="plan-button" id="loadProgress" type="button">تحديث تقرير الفصل</button><p class="muted" id="progressNotice">اختر فصلًا من القائمة بالأعلى لعرض ملخص متابعة الطلاب.</p><div class="session-list" id="progressList"></div></section>
+<section class="detail" id="quizAnalyticsPanel">
+ <h2>تحليلات محاولات الاختبارات · v2.6</h2>
+ <p class="muted">سجل زمني للمحاولات وإشارات الإجابات على مستوى المفهوم. المقارنات وصفية فقط ولا تثبت الإتقان أو التحسن السببي.</p>
+ <div class="plan-actions">
+  <label for="analyticsLesson">الدرس</label>
+  <select id="analyticsLesson"><option value="">كل الدروس</option><option value="fractions">فهم الكسور</option><option value="decimals">الأعداد العشرية</option><option value="ratio">النسبة والتناسب</option></select>
+  <button class="plan-button" id="loadQuizAnalytics" type="button">تحميل التحليلات</button>
+ </div>
+ <p class="muted" id="analyticsNotice" role="status">اختار فصلًا ثم حمّل التحليلات.</p>
+ <div class="teacher-grid" id="analyticsStats"></div>
+ <div class="session-list" id="analyticsStudents"></div>
+ <div class="detail" id="analyticsStudentDetail" hidden>
+  <h3 id="analyticsStudentTitle">تفاصيل المحاولات</h3>
+  <p class="muted" id="analyticsStudentSummary"></p>
+  <div id="analyticsTimeline" class="analytics-chart" role="img" aria-label="رسم زمني لنسب الإجابات الصحيحة"></div>
+  <div id="analyticsConcepts" class="session-list"></div>
+ </div>
+</section>
+<section class="teacher-grid"><div class="stat"><span class="muted">عدد الجلسات المعروضة</span><strong id="total">—</strong></div><div class="stat"><span class="muted">إجمالي إجابات الطلاب</span><strong id="turns">—</strong></div><div class="stat"><span class="muted">جلسات بها تفاعل</span><strong id="active">—</strong></div></section><section class="detail" id="reviewSuggestionsPanel"><h2>مقترحات مراجعة من إجابات الاختبارات</h2><p class="muted">تجميع إجابات على مستوى الفصل فقط. لا يعرض أسماء الطلاب ولا يقيس الإتقان.</p><label for="reviewClass">الفصل</label><select id="reviewClass"></select><button id="loadReviewSuggestions" type="button">تحميل المقترحات</button><div id="reviewSuggestions"></div></section><section class="detail" id="insightsPanel"><h2>مؤشرات على مستوى الفصل</h2><p class="muted">تجميع جلسات محلية حسب الدرس — ليست قياسًا للإتقان.</p><div id="insights"><p class="muted">جاري تجميع المؤشرات...</p></div></section><section class="detail" id="prioritiesPanel"><h2>أولويات إعادة الشرح</h2><p class="muted">اقتراحات للمراجعة البشرية، وليست تشخيصًا أو قياسًا للإتقان.</p><div id="priorities"><p class="muted">جاري التحميل...</p></div></section><section class="detail" id="interventionPanel" hidden><h2 id="planTitle">خطة إعادة الشرح المقترحة</h2><p class="muted" id="planNotice"></p><div id="planSteps"></div><div class="plan-step" id="feedbackBox"><h3>تقييم المدرّس للخطة</h3><p class="muted">شاركنا هل كانت الخطة مناسبة؟ التقييم اختياري ومرتبط بحساب المدرّس؛ الملاحظات لا تظهر في الملخصات، ولا يُستخدم التقييم للحكم على الطالب.</p><label><input type="radio" name="planRating" value="helpful"> مفيدة</label> <label><input type="radio" name="planRating" value="partly_helpful"> مفيدة جزئيًا</label> <label><input type="radio" name="planRating" value="not_helpful"> غير مفيدة</label><textarea id="feedbackNote" maxlength="500" placeholder="ملاحظة اختيارية (حتى 500 حرف)" style="width:100%;min-height:70px;margin-top:10px"></textarea><button class="plan-button" id="sendFeedback">حفظ التقييم</button><p class="muted" id="feedbackStatus" role="status"></p><div id="feedbackSummary" class="muted"></div></div><div class="plan-actions"><button class="plan-button" onclick="window.print()">طباعة الخطة</button><button class="plan-button" onclick="closePlan()">إغلاق</button></div></section><section><h2>الجلسات الأخيرة</h2><div id="sessions" class="session-list"><p class="muted">جاري التحميل...</p></div></section><section id="detail" class="detail" hidden><h2 id="detailTitle">تفاصيل الجلسة</h2><p id="detailMeta" class="muted"></p><div id="report"></div><h3>نص المحادثة</h3><div id="transcript" class="transcript"></div></section><footer>مؤشرات أولية للمراجعة البشرية · ليست درجات رسمية</footer></main><script>
 const $=id=>document.getElementById(id);function renderInsights(data){const root=$('insights');root.innerHTML='';if(!data.lessons.length){root.textContent='لا توجد جلسات كافية لعرض مؤشرات بعد.';return}data.lessons.forEach(lesson=>{const wrap=document.createElement('div');wrap.className='session';const info=document.createElement('div');const title=document.createElement('strong');title.textContent=lesson.lesson+' · '+lesson.session_count+' جلسة';info.appendChild(title);lesson.concepts.forEach(concept=>{const line=document.createElement('div');line.className='muted';line.textContent=concept.concept+' — أدلة كلمات في '+concept.sessions_with_keyword_evidence+' جلسة · إشارة مراجعة في '+concept.sessions_flagged_for_review+' جلسة';info.appendChild(line)});wrap.appendChild(info);root.appendChild(wrap)});const note=document.createElement('p');note.className='muted';note.textContent=data.notice;root.appendChild(note)}
 function renderPriorities(data){const root=$('priorities');root.innerHTML='';if(!data.priorities.length){root.textContent='لا توجد إشارات مراجعة مسجلة حتى الآن.';return}data.priorities.forEach(item=>{const row=document.createElement('div');row.className='session';const body=document.createElement('div');const title=document.createElement('strong');title.textContent=item.lesson+' · '+item.concept;const meta=document.createElement('div');meta.className='muted';meta.textContent=item.label+' — '+item.reason+' أدلة كلمات في '+item.sessions_with_keyword_evidence+' جلسة.';body.append(title,meta);row.appendChild(body);const btn=document.createElement("button");btn.className="plan-button";btn.textContent="إنشاء خطة إعادة شرح";btn.onclick=()=>loadPlan(item.lesson_id,item.concept_id);row.appendChild(btn);root.appendChild(row)});const note=document.createElement('p');note.className='muted';note.textContent=data.notice;root.appendChild(note)}
 function closePlan(){$("interventionPanel").hidden=true}
@@ -67,4 +86,84 @@ $('refresh').onclick=()=>{load();loadAssignments();loadClassProgress()};loadClas
 async function loadReviewSuggestions(){try{const id=$('reviewClass').value;if(!id)return;const d=await get('/api/teacher/classes/'+encodeURIComponent(id)+'/review-suggestions');$('reviewSuggestions').innerHTML='';if(!d.suggestions.length){$('reviewSuggestions').textContent='لا توجد إشارات مجمّعة كافية بعد. لا تظهر أي فكرة قبل تسجيل إجابتين غير صحيحتين على الأقل.';return}d.suggestions.forEach(x=>add($('reviewSuggestions'),x.lesson+' · '+x.concept,'إجابات غير صحيحة: '+x.incorrect_answers+' من '+x.attempts+' محاولة. '+x.activity+' سؤال للنقاش: '+x.teacher_question));const n=document.createElement('p');n.className='muted';n.textContent=d.notice+' مصدر الاقتراح: '+d.source;$('reviewSuggestions').append(n)}catch(e){$('reviewSuggestions').textContent=e.message}}
 $('loadReviewSuggestions').onclick=loadReviewSuggestions;$('reviewClass').onchange=loadReviewSuggestions;
 load();loadAssignments();loadClassProgress();loadDailyOperations();loadLearningGraph();loadLearningProposals()});
+
+/* v2.6 interactive quiz analytics */
+function analyticsNode(tag, text, className){
+ const el=document.createElement(tag);
+ if(text!==undefined)el.textContent=text;
+ if(className)el.className=className;
+ return el;
+}
+function renderAnalyticsStats(data){
+ const root=$('analyticsStats');root.innerHTML='';
+ const stats=[
+  ['طلاب لديهم محاولات',data.students_with_attempts+' / '+data.student_count],
+  ['إجمالي المحاولات',data.attempt_count],
+  ['أسئلة تمت الإجابة عنها',data.students.reduce((n,s)=>n+s.analytics.question_count,0)]
+ ];
+ stats.forEach(([label,value])=>{const card=analyticsNode('div',undefined,'stat');card.append(analyticsNode('span',label,'muted'),analyticsNode('strong',String(value)));root.append(card)});
+}
+function renderStudentAnalyticsList(data){
+ const root=$('analyticsStudents');root.innerHTML='';
+ if(!data.students.length){root.textContent='لا يوجد طلاب في الفصل.';return}
+ data.students.forEach(student=>{
+  const a=student.analytics,card=analyticsNode('div',undefined,'session');
+  const info=analyticsNode('div'),name=analyticsNode('strong',student.display_name);
+  const line=analyticsNode('p',
+   a.attempt_count+' محاولة · '+a.question_count+' سؤال · '+(a.overall_accuracy_percentage===null?'لا توجد إجابات قابلة للتحليل':a.overall_accuracy_percentage+'% إجابات صحيحة'),
+   'muted');
+  info.append(name,line);
+  const button=analyticsNode('button','عرض سجل المحاولات');
+  button.type='button';button.onclick=()=>renderStudentAnalyticsDetail(student);
+  card.append(info,button);root.append(card);
+ });
+}
+function renderTimelineChart(root,timeline){
+ root.innerHTML='';
+ if(!timeline.length){root.textContent='لا توجد محاولات مسجلة لهذا الطالب في الفلتر الحالي.';return}
+ const ns='http://www.w3.org/2000/svg',svg=document.createElementNS(ns,'svg');
+ svg.setAttribute('viewBox','0 0 640 230');svg.setAttribute('width','100%');svg.setAttribute('role','img');
+ const addSvg=(tag,attrs,text)=>{const el=document.createElementNS(ns,tag);Object.entries(attrs).forEach(([k,v])=>el.setAttribute(k,v));if(text!==undefined)el.textContent=text;svg.append(el);return el};
+ [0,25,50,75,100].forEach(v=>{const y=185-v*1.5;addSvg('line',{x1:52,y1:y,x2:615,y2:y,stroke:'#39415f','stroke-width':1});addSvg('text',{x:42,y:y+4,'text-anchor':'end',fill:'#a8aecb','font-size':11},v+'%')});
+ const points=timeline.map((item,i)=>({x:58+(timeline.length===1?0:i*550/(timeline.length-1)),y:185-item.percentage*1.5}));
+ if(points.length>1)addSvg('polyline',{points:points.map(p=>p.x+','+p.y).join(' '),fill:'none',stroke:'#58e0df','stroke-width':3,'stroke-linecap':'round','stroke-linejoin':'round'});
+ points.forEach((p,i)=>{addSvg('circle',{cx:p.x,cy:p.y,r:5,fill:'#9272ff',stroke:'#fff','stroke-width':1});addSvg('text',{x:p.x,y:Math.max(12,p.y-12),'text-anchor':'middle',fill:'#fff','font-size':11},timeline[i].percentage+'%');addSvg('text',{x:p.x,y:207,'text-anchor':'middle',fill:'#a8aecb','font-size':10},'#'+timeline[i].attempt)});
+ root.append(svg);
+}
+function renderStudentAnalyticsDetail(student){
+ const data=student.analytics,box=$('analyticsStudentDetail');box.hidden=false;
+ $('analyticsStudentTitle').textContent='سجل محاولات · '+student.display_name;
+ $('analyticsStudentSummary').textContent=data.attempt_count+' محاولة · '+data.question_count+' سؤال · '+(data.overall_accuracy_percentage===null?'لا توجد نسبة متاحة':data.overall_accuracy_percentage+'% إجابات صحيحة')+' — بيانات وصفية لا تمثل درجة أو تشخيصًا.';
+ const root=$('analyticsConcepts');root.innerHTML='';
+ if(!data.lessons.length){root.textContent='لا توجد تفاصيل مفاهيم في المحاولات المسجلة.';box.scrollIntoView({behavior:'smooth',block:'start'});return}
+ data.lessons.forEach(lesson=>{
+  const section=analyticsNode('section',undefined,'analytics-lesson');
+  section.append(analyticsNode('h4',lesson.lesson_id+' · '+lesson.attempt_count+' محاولة'));
+  const chart=analyticsNode('div',undefined,'analytics-chart');chart.setAttribute('role','img');chart.setAttribute('aria-label','رسم زمني لنسب الإجابات الصحيحة في '+lesson.lesson_id);
+  renderTimelineChart(chart,lesson.timeline);section.append(chart);
+  lesson.concepts.forEach(concept=>{
+   const card=analyticsNode('div',undefined,'plan-step');
+   card.append(analyticsNode('strong',concept.concept_id));
+   card.append(analyticsNode('p','محاولات: '+concept.attempts+' · صحيحة: '+concept.correct+' · غير صحيحة: '+concept.incorrect+' · نسبة الإجابات الصحيحة: '+concept.accuracy_percentage+'%'));
+   const change=concept.change_between_first_and_latest;
+   const label=change==='correct_after_incorrect'?'آخر إجابة صحيحة بعد إجابة أولى غير صحيحة':change==='incorrect_after_correct'?'آخر إجابة غير صحيحة بعد إجابة أولى صحيحة':'لم يتغير وصف الإجابة بين أول وآخر تسجيل';
+   card.append(analyticsNode('p',label,'muted'));section.append(card);
+  });
+  root.append(section);
+ });
+ box.scrollIntoView({behavior:'smooth',block:'start'});
+}
+async function loadQuizAnalytics(){
+ const classId=$('classFilter').value,lessonId=$('analyticsLesson').value;
+ if(!classId){$('analyticsNotice').textContent='اختار فصلًا أولًا من أعلى الصفحة.';$('analyticsStudents').innerHTML='';$('analyticsStats').innerHTML='';return}
+ $('analyticsNotice').textContent='جاري تحميل سجل المحاولات...';
+ $('analyticsStudentDetail').hidden=true;
+ try{
+  const url='/api/teacher/classes/'+encodeURIComponent(classId)+'/learning-analytics'+(lessonId?'?lesson_id='+encodeURIComponent(lessonId):'');
+  const data=await get(url);
+  renderAnalyticsStats(data);renderStudentAnalyticsList(data);
+  $('analyticsNotice').textContent=data.class_name+' · '+data.notice;
+ }catch(error){$('analyticsNotice').textContent=error.message;$('analyticsStudents').innerHTML='';$('analyticsStats').innerHTML=''}
+}
+$('loadQuizAnalytics').onclick=loadQuizAnalytics;
 </script></body></html>

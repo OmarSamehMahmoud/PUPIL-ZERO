@@ -30,7 +30,7 @@ from app.progress_analytics import build_quiz_learning_analytics
 
 ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = ROOT / "pupil_zero.db"
-app = FastAPI(title="PUPIL ZERO", version="2.5.0", description="Local-first learning-by-teaching MVP")
+app = FastAPI(title="PUPIL ZERO", version="2.6.0", description="Local-first learning-by-teaching MVP")
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
 
@@ -1889,7 +1889,7 @@ def teacher_session_detail(session_id: str, teacher: dict[str,Any] = Depends(cur
 
 @app.get("/api/health")
 def health() -> dict[str, Any]:
-    return {"status": "ok", "product": "PUPIL ZERO", "version": "2.5.0", **public_status()}
+    return {"status": "ok", "product": "PUPIL ZERO", "version": "2.6.0", **public_status()}
 
 
 @app.get("/api/lessons")
