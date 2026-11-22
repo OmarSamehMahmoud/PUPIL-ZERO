@@ -30,10 +30,11 @@ from app.progress_analytics import build_quiz_learning_analytics
 from app.teacher_copilot import build_teacher_copilot
 from app.student_companion import companion_guidance, redact_for_model, fallback_companion_reply
 from app.companion_evolution import build_companion_progress, companion_evolution_guidance, count_completed_exchanges, persona_fallback_reply
+from app.classroom_simulation import authored_roundtable, classroom_guidance, format_roundtable, validate_roundtable
 
 ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = ROOT / "pupil_zero.db"
-app = FastAPI(title="PUPIL ZERO", version="2.9.0", description="Local-first learning-by-teaching platform with evolving private AI classmates")
+app = FastAPI(title="PUPIL ZERO", version="3.0.0", description="Local-first learning platform with private AI classroom simulations")
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
 
@@ -172,6 +173,11 @@ class CompanionMessageRequest(BaseModel):
 class CompanionProfileRequest(BaseModel):
     persona: str = Field(default="milo", pattern="^(milo|noura|zizo)$")
     learning_style: str = Field(default="step_by_step", pattern="^(step_by_step|example_first|quiz_me)$")
+
+class ClassroomMessageRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=2000)
+    lesson_id: str = Field(default="fractions", min_length=1, max_length=64)
+    session_id: str | None = Field(default=None, min_length=36, max_length=36)
 
 
 class InterventionFeedbackRequest(BaseModel):
@@ -364,6 +370,13 @@ def init_db() -> None:
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         )""")
         con.execute("CREATE INDEX IF NOT EXISTS idx_companion_student_updated ON student_companion_conversations(student_id,updated_at)")
+        con.execute("""CREATE TABLE IF NOT EXISTS classroom_simulations (
+            id TEXT PRIMARY KEY, student_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            lesson_id TEXT NOT NULL, transcript_json TEXT NOT NULL DEFAULT '[]',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )""")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_classroom_student_updated ON classroom_simulations(student_id,updated_at)")
 
         con.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_school_teachers_single_school ON school_teachers(teacher_id)")
         con.execute("""CREATE TABLE IF NOT EXISTS school_teacher_invites (
@@ -947,6 +960,122 @@ async def send_student_companion_message(payload: CompanionMessageRequest,
         "notice": "المرافق أداة تدريب وممارسة، وليس مدرسًا أو تقييمًا معتمدًا. اسأل معلمك عند الشك. مستوى الرحلة يعتمد على عدد المحادثات المكتملة فقط.",
 
         "privacy": "حُفظت المحادثة داخل حسابك. أُزيلت بيانات الحساب المعروفة وبعض أنماط البريد والهاتف من النص المرسل للنموذج المحلي.",
+    }
+
+
+
+# v3.0: a private, persistent roundtable with three distinct AI classmates.
+@app.get("/api/student/classroom")
+def list_student_classroom_sessions(student: dict[str, Any] = Depends(current_student)) -> dict[str, Any]:
+    with db() as con:
+        rows = con.execute(
+            """SELECT id,lesson_id,transcript_json,created_at,updated_at
+               FROM classroom_simulations WHERE student_id=?
+               ORDER BY updated_at DESC LIMIT 30""",
+            (student["id"],),
+        ).fetchall()
+    sessions = []
+    for row in rows:
+        try:
+            transcript = json.loads(row["transcript_json"] or "[]")
+        except (TypeError, json.JSONDecodeError):
+            transcript = []
+        first = next((item.get("text", "") for item in transcript if item.get("role") == "student"), "")
+        sessions.append({
+            "session_id": row["id"], "lesson_id": row["lesson_id"],
+            "title": first[:56] or get_lesson(row["lesson_id"])["title_ar"],
+            "updated_at": row["updated_at"],
+        })
+    return {"sessions": sessions, "privacy": "كل نقاش محفوظ داخل حساب الطالب فقط."}
+
+
+@app.get("/api/student/classroom/{session_id}")
+def get_student_classroom_session(session_id: str,
+                                  student: dict[str, Any] = Depends(current_student)) -> dict[str, Any]:
+    with db() as con:
+        row = con.execute(
+            "SELECT id,lesson_id,transcript_json,created_at,updated_at FROM classroom_simulations WHERE id=? AND student_id=?",
+            (session_id, student["id"]),
+        ).fetchone()
+    if not row:
+        raise HTTPException(404, "Classroom session not found")
+    return {
+        "session_id": row["id"], "lesson_id": row["lesson_id"],
+        "transcript": json.loads(row["transcript_json"] or "[]"),
+        "created_at": row["created_at"], "updated_at": row["updated_at"],
+    }
+
+
+@app.post("/api/student/classroom/messages")
+async def send_student_classroom_message(payload: ClassroomMessageRequest,
+                                          student: dict[str, Any] = Depends(current_student)) -> dict[str, Any]:
+    student_text = payload.text.strip()
+    if not student_text:
+        raise HTTPException(422, "Message cannot be empty")
+    with db() as con:
+        if payload.session_id:
+            row = con.execute(
+                "SELECT * FROM classroom_simulations WHERE id=? AND student_id=?",
+                (payload.session_id, student["id"]),
+            ).fetchone()
+            if not row:
+                raise HTTPException(404, "Classroom session not found")
+            session_id, lesson_id = row["id"], row["lesson_id"]
+            transcript = json.loads(row["transcript_json"] or "[]")
+        else:
+            lesson_id = payload.lesson_id
+            lesson = get_lesson(lesson_id)
+            if not lesson:
+                raise HTTPException(404, "Lesson not found")
+            session_id = str(uuid.uuid4())
+            transcript = []
+            con.execute(
+                "INSERT INTO classroom_simulations(id,student_id,lesson_id,transcript_json) VALUES(?,?,?,'[]')",
+                (session_id, student["id"], lesson_id),
+            )
+    lesson = get_lesson(lesson_id)
+    if not lesson:
+        raise HTTPException(404, "Lesson not found")
+    transcript.append({"role": "student", "text": student_text})
+    status = public_status()
+    if status["mode"] == "live_ai":
+        safe_transcript = redact_for_model(
+            transcript, [student.get("display_name", ""), student.get("email", "")]
+        )
+        model_messages = [{"role": item["role"], "text": item["text"]} for item in safe_transcript]
+        try:
+            raw = await generate_reply(
+                model_messages, lesson, "milo",
+                classroom_guidance(lesson) + " أخرج JSON فقط ولا تضف أي نص خارج JSON."
+            )
+            roundtable = validate_roundtable(raw)
+            mode = "live_ai"
+        except Exception as exc:
+            raise HTTPException(
+                503,
+                detail=f"Local classroom AI is unavailable or returned invalid output ({type(exc).__name__}). Try again.",
+            ) from exc
+    else:
+        roundtable = authored_roundtable(student_text, lesson)
+        mode = "authored_fallback"
+    classroom_text = format_roundtable(roundtable)
+    transcript.append({
+        "role": "ai", "text": classroom_text,
+        "contributions": roundtable["contributions"],
+        "teacher_question": roundtable["teacher_question"],
+    })
+    with db() as con:
+        con.execute(
+            """UPDATE classroom_simulations SET transcript_json=?,updated_at=CURRENT_TIMESTAMP
+               WHERE id=? AND student_id=?""",
+            (json.dumps(transcript, ensure_ascii=False), session_id, student["id"]),
+        )
+    return {
+        "session_id": session_id, "lesson_id": lesson_id,
+        "transcript": transcript, "contributions": roundtable["contributions"],
+        "teacher_question": roundtable["teacher_question"], "mode": mode,
+        "notice": "نقاش تدريبي بين شخصيات افتراضية، وليس نقاشًا بين أشخاص حقيقيين أو تقييمًا للطالب. راجع معلمك عند الشك.",
+        "privacy": "أُرسلت للموديل المحلي رسائل النقاش بعد إزالة بيانات الحساب المعروفة وبعض أنماط البريد والهاتف.",
     }
 
 

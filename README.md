@@ -1,6 +1,6 @@
 # PUPIL ZERO
 
-**Prototype version: 2.9.0**
+**Prototype version: 3.0.0**
 
 **Teach an AI. Discover what you really know.**
 
@@ -18,6 +18,7 @@ PUPIL ZERO is an Arabic-first, learning-by-teaching prototype. A learner explain
 - Student progress endpoint summarizing their own sessions, lessons visited, and longitudinal concept keyword signals; optional class filter is restricted to their memberships.
 - Teacher class progress dashboard with per-student session counts, lessons visited, and evidence-signal summaries; individual progress is available only when the student belongs to a class owned by that teacher.
 - Parent accounts can only be created from a teacher-issued, single-use guardian invitation tied to a specific student and class; invitations expire after seven days.
+- AI Classroom Simulation (v3.0): students can start and resume private, lesson-scoped roundtable discussions with MILO (curious explorer), NOURA (everyday examples), and ZIZO (optional challenges). One structured local-model response orchestrates all three speakers; output is schema-validated before display. When no model is configured, a clearly labelled authored fallback keeps the classroom flow usable. Sessions are account-scoped, persisted locally, and redact known account name/email plus common phone/email patterns before local inference. This is a learning conversation, not a real peer discussion or student assessment.
 - Evolving AI Classmates (v2.9): MILO, NOURA, and ZIZO now have distinct, explicit teaching behaviors; each student's companion journey advances through transparent stages and optional challenges as completed conversation turns accumulate. The student hub displays unlocked journey badges and the next milestone. Progress is based only on completed student/companion exchanges, is account-scoped, and is explicitly not a measure of intelligence, personality, engagement quality, or mastery. Persona and stage guidance is supplied to the configured local model; distinct authored fallback replies remain available without a model.
 - Private Student Learning Companion (v2.8): each authenticated student can choose one of three classmate personas and a learning style, start/resume conversations, and keep a private conversation history tied to their account. Uses the configured local model when available; otherwise clearly labels deterministic guidance as fallback. Known account display name/email and common email/phone patterns are redacted from companion messages before a model call. Companion history is not shared with teachers or other students by these APIs.
 - Evidence-Based Teacher Copilot (v2.7): aggregates repeated incorrect formative-quiz answers at class level, links the concept to authored prerequisite metadata, and presents a lesson-authored review activity with traceable question evidence. Teachers can create a pending learning-path proposal from the suggestion; existing approval workflow is required before any student assignment is created. No student names are sent to an LLM, and the deterministic signals are not diagnoses or mastery estimates.
@@ -134,6 +135,9 @@ Tests are committed and a GitHub Actions workflow runs them on pushes and pull r
 - `GET /api/student/notifications` / `GET /api/teacher/notifications` — role-scoped in-app notification inboxes.
 - `POST /api/notifications/{notification_id}/read` — mark one own notification as read.
 - `GET /api/parent/students/{student_id}/school-summary?class_id=...` — attendance, timetable, and notifications for an explicitly linked student/class.
+- `GET /api/student/classroom` — list the signed-in student's private AI classroom discussions.
+- `GET /api/student/classroom/{session_id}` — resume one classroom discussion owned by the signed-in student.
+- `POST /api/student/classroom/messages` — add a student message and receive a structured roundtable from MILO, NOURA, and ZIZO. JSON: `{"lesson_id":"fractions","text":"عايز أفهم الكسور" }`; send `session_id` to continue an existing discussion.
 - `GET /api/student/progress` — the signed-in student's own learning progress; optional enrolled `class_id` filter.
 - `GET /api/teacher/classes/{class_id}/progress` — roster-level progress summary for a class owned by the signed-in teacher.
 - `GET /api/teacher/students/{student_id}/progress?class_id=...` — individual progress, only for a student enrolled in the specified class owned by the teacher.

@@ -10,6 +10,7 @@
 .companion-compose{display:flex;gap:8px;align-items:stretch}
 .companion-compose textarea{flex:1;min-height:76px}
 .companion-evolution{background:#11172d;border:1px solid var(--line);border-radius:12px;padding:14px;margin:12px 0}.companion-evolution progress{width:100%;height:10px;accent-color:var(--cyan)}.companion-badges{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.companion-badge{border:1px solid #4b4778;background:#29264a;border-radius:30px;padding:5px 10px;font-size:12px;color:#ddd7ff}
+.classroom-thread{display:flex;flex-direction:column;gap:12px;max-height:560px;overflow:auto;padding:12px;background:#101329;border:1px solid var(--line);border-radius:12px;margin:12px 0}.classroom-turn{padding:12px;border:1px solid var(--line);border-radius:12px;background:#171d37}.classroom-turn.student{border-inline-start:4px solid #65a9ff}.classroom-turn.ai{border-inline-start:4px solid #9c8cff}.classroom-speaker{font-weight:700;color:#c9c0ff;margin-bottom:5px}.classroom-turn p{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.8;margin:4px 0}.classroom-controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin:12px 0}.classroom-controls label{display:flex;flex-direction:column;gap:6px}
 </style></head>
 <body><main class="shell hub"><header class="topbar"><a class="brand" href="/">PUPIL<span>ZERO</span></a><span class="tag">STUDENT HUB</span><a href="/">ابدأ التعلم</a></header>
 <section class="hero-copy"><p class="eyebrow">مساحتك التعليمية</p><h1>أهلاً بيك في يومك الدراسي</h1><p class="sub" id="welcome">جاري تحميل جدولك وواجباتك...</p></section>
@@ -49,6 +50,28 @@
  </div>
  <p class="muted">خصوصيتك مهمة: لا تكتب اسمك الكامل أو رقم هاتفك أو عنوانك. المرافق أداة تدريب، واستعن بمعلمك عند الحاجة.</p>
 </section>
+
+<section class="hub-card" id="aiClassroom">
+ <h2>الفصل الافتراضي · AI Classroom</h2>
+ <p class="muted">افتح نقاشًا مع MILO وNOURA وZIZO معًا. كل شخصية لها دور مختلف، وأنت عضو أساسي في النقاش.</p>
+ <div class="classroom-controls">
+  <label>موضوع النقاش
+   <select id="classroomLesson"><option value="fractions">فهم الكسور</option><option value="decimals">الأعداد العشرية</option><option value="ratio">النسبة والتناسب</option></select>
+  </label>
+  <label>نقاش سابق
+   <select id="classroomHistory"><option value="">نقاش جديد</option></select>
+  </label>
+ </div>
+ <button id="newClassroom" class="ghost" type="button">ابدأ نقاشًا جديدًا</button>
+ <p id="classroomStatus" class="muted" role="status">الفصل الافتراضي جاهز للنقاش.</p>
+ <div id="classroomThread" class="classroom-thread" aria-live="polite" aria-label="نقاش الفصل الافتراضي"></div>
+ <div class="companion-compose">
+  <textarea id="classroomMessage" maxlength="2000" placeholder="اكتب سؤالك أو شارك فكرتك مع الفصل..."></textarea>
+  <button id="sendClassroomMessage" type="button">شارك في النقاش</button>
+ </div>
+ <p class="muted">الشخصيات افتراضية وليست أشخاصًا حقيقيين. الردود الإرشادية بدون موديل محلي ستكون مكتوبة مسبقًا بوضوح.</p>
+</section>
+
 <section class="hub-card" id="learningEngine"><h2>مسار التعلم والاختبار التدريبي</h2><p class="muted">اقتراحات مراجعة مبنية على إشارات الشرح السابقة. الاختبار تدريبي وليس درجة مدرسية.</p><label for="engineLesson">اختار الدرس</label><select id="engineLesson"><option value="fractions">فهم الكسور</option><option value="decimals">الأعداد العشرية</option><option value="ratio">النسبة والتناسب</option></select><button id="loadPlan" type="button">اعرض مسار المراجعة</button><div id="planSteps"></div><button id="startQuiz" type="button">ابدأ اختبارًا قصيرًا</button><form id="quizForm" hidden><div id="quizQuestions"></div><button type="submit">صحّح إجاباتي</button></form><div id="quizResult" aria-live="polite"></div><div id="quizHistory"></div></section>
 
 <section class="hub-card" id="openResponsePanel">
@@ -142,6 +165,72 @@ $('companionMessage').addEventListener('keydown',event=>{
  if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();$('sendCompanionMessage').click()}
 });
 refreshCompanion().catch(error=>{$('companionStatus').textContent=error.message});
+
+/* v3.0 private AI classroom simulation */
+let classroomSessionId=null;
+function renderClassroomTranscript(transcript){
+ const root=$('classroomThread');root.innerHTML='';
+ (transcript||[]).forEach(item=>{
+  const card=document.createElement('article');card.className='classroom-turn '+(item.role==='student'?'student':'ai');
+  if(item.role==='student'){
+   const who=document.createElement('div');who.className='classroom-speaker';who.textContent='أنت';card.append(who);
+   const body=document.createElement('p');body.textContent=item.text||'';card.append(body);
+  }else{
+   const rows=Array.isArray(item.contributions)?item.contributions:[];
+   rows.forEach(row=>{
+    const who=document.createElement('div');who.className='classroom-speaker';
+    who.textContent=({milo:'MILO · المستكشف الفضولي',noura:'NOURA · صانعة الأمثلة',zizo:'ZIZO · محب التحديات'})[row.speaker]||'زميل الفصل';
+    const body=document.createElement('p');body.textContent=row.text||'';card.append(who,body);
+   });
+   if(item.teacher_question){
+    const who=document.createElement('div');who.className='classroom-speaker';who.textContent='سؤال الفصل';
+    const body=document.createElement('p');body.textContent=item.teacher_question;card.append(who,body);
+   }
+   if(!rows.length){const body=document.createElement('p');body.textContent=item.text||'';card.append(body)}
+  }
+  root.append(card);
+ });
+ root.scrollTop=root.scrollHeight;
+}
+async function refreshClassroomHistory(){
+ const data=await get('/api/student/classroom');
+ const select=$('classroomHistory');select.innerHTML='';
+ const empty=document.createElement('option');empty.value='';empty.textContent='نقاش جديد';select.append(empty);
+ data.sessions.forEach(item=>{
+  const option=document.createElement('option');option.value=item.session_id;
+  option.textContent=item.title+' · '+item.lesson_id;select.append(option);
+ });
+}
+$('newClassroom').onclick=()=>{
+ classroomSessionId=null;$('classroomHistory').value='';$('classroomThread').innerHTML='';
+ $('classroomStatus').textContent='نقاش جديد · اختار موضوعًا وابدأ الحديث مع الفصل.';
+};
+$('classroomHistory').onchange=async()=>{
+ const id=$('classroomHistory').value;
+ if(!id){classroomSessionId=null;$('classroomThread').innerHTML='';return}
+ try{
+  const data=await get('/api/student/classroom/'+encodeURIComponent(id));
+  classroomSessionId=data.session_id;$('classroomLesson').value=data.lesson_id;
+  renderClassroomTranscript(data.transcript);$('classroomStatus').textContent='تم استرجاع النقاش السابق.';
+ }catch(error){$('classroomStatus').textContent=error.message}
+};
+$('sendClassroomMessage').onclick=async()=>{
+ const input=$('classroomMessage'),message=input.value.trim();if(!message)return;
+ const button=$('sendClassroomMessage');button.disabled=true;$('classroomStatus').textContent='زمايلك بيناقشوا فكرتك...';
+ try{
+  const response=await fetch('/api/student/classroom/messages',{method:'POST',headers:{'Content-Type':'application/json'},
+   body:JSON.stringify({text:message,lesson_id:$('classroomLesson').value,session_id:classroomSessionId})});
+  const data=await response.json();if(!response.ok)throw new Error(data.detail||'تعذر إرسال الرسالة');
+  classroomSessionId=data.session_id;input.value='';renderClassroomTranscript(data.transcript);
+  await refreshClassroomHistory();$('classroomHistory').value=classroomSessionId;
+  $('classroomStatus').textContent=(data.mode==='live_ai'?'نقاش أنشأه الموديل المحلي':'نقاش إرشادي مكتوب مسبقًا')+' · '+data.notice;
+ }catch(error){$('classroomStatus').textContent=error.message}
+ finally{button.disabled=false}
+};
+$('classroomMessage').addEventListener('keydown',event=>{
+ if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();$('sendClassroomMessage').click()}
+});
+refreshClassroomHistory().catch(error=>{$('classroomStatus').textContent=error.message});
 
 $('analyzeOpenResponse').onclick=async()=>{
  const status=$('openResponseStatus'),root=$('openResponseResult'),answer=$('openResponseAnswer').value.trim();
