@@ -327,3 +327,64 @@ async def generate_teacher_review_suggestions(lesson: dict[str, Any], patterns: 
             item[key]=value.strip()
         result.append(item)
     return result
+
+
+async def generate_open_response_analysis(lesson: dict[str, Any], answer: str) -> list[dict[str, str]]:
+    """Link an open response to authored concepts using quoted, verifiable evidence only."""
+    import json
+    cfg = provider_settings()
+    concepts = [{"concept_id": c["id"], "concept": c["label_ar"],
+                 "learning_note": c.get("correction", ""), "evidence_terms": c.get("evidence_terms", [])}
+                for c in lesson.get("concepts", [])]
+    if cfg["provider"] not in {"ollama", "openai-compatible"} or not cfg["model"]:
+        raise RuntimeError("A configured local AI provider and model are required")
+    prompt = ("Review this student's explanation for formative support. Do not diagnose, grade, infer ability, "
+        "or claim mastery. For every supplied concept return one row. Any positive signal MUST quote an exact "
+        "substring from student_answer in evidence_quote. Otherwise use empty quote and status needs_clarification. "
+        "Never invent evidence. Return JSON only: {concept_signals:[{concept_id,status,evidence_quote,"
+        "interpretation,follow_up_question}]}. status is evidence_found or needs_clarification. "
+        "Use concise Egyptian Arabic for interpretation and follow_up_question.\nDATA:\n" +
+        json.dumps({"lesson": lesson.get("title_ar"), "concepts": concepts, "student_answer": answer}, ensure_ascii=False))
+    messages = [{"role":"system","content":"You are a cautious formative-learning assistant. Output valid JSON only."},
+                {"role":"user","content":prompt}]
+    timeout = httpx.Timeout(90.0, connect=5.0)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        if cfg["provider"] == "ollama":
+            response = await client.post(f"{cfg['base_url']}/api/chat",
+                json={"model":cfg["model"],"messages":messages,"stream":False,"format":"json",
+                      "options":{"temperature":0.1}})
+            response.raise_for_status()
+            raw = response.json().get("message",{}).get("content","")
+        else:
+            headers = {"Authorization":f"Bearer {cfg['api_key']}"} if cfg["api_key"] else {}
+            response = await client.post(f"{cfg['base_url']}/v1/chat/completions",headers=headers,
+                json={"model":cfg["model"],"messages":messages,"temperature":0.1,
+                      "response_format":{"type":"json_object"}})
+            response.raise_for_status()
+            choices=response.json().get("choices",[])
+            raw=choices[0].get("message",{}).get("content","") if choices else ""
+    try:
+        parsed=json.loads(str(raw).strip())
+        rows=parsed.get("concept_signals") if isinstance(parsed,dict) else None
+    except (TypeError,ValueError) as exc:
+        raise RuntimeError("Local AI returned invalid open-response JSON") from exc
+    expected={c["concept_id"] for c in concepts}
+    if not isinstance(rows,list) or {x.get("concept_id") for x in rows if isinstance(x,dict)} != expected:
+        raise RuntimeError("Local AI concept links did not match this lesson")
+    clean=[]
+    for row in rows:
+        if not isinstance(row,dict) or row.get("status") not in {"evidence_found","needs_clarification"}:
+            raise RuntimeError("Local AI returned an invalid evidence status")
+        quote=row.get("evidence_quote","")
+        if not isinstance(quote,str) or len(quote)>240 or (quote and quote not in answer):
+            raise RuntimeError("Local AI evidence quote was not found verbatim in the answer")
+        if (row["status"]=="evidence_found") != bool(quote):
+            raise RuntimeError("Local AI evidence status and quote disagree")
+        item={"concept_id":row["concept_id"],"status":row["status"],"evidence_quote":quote}
+        for key in ("interpretation","follow_up_question"):
+            value=row.get(key)
+            if not isinstance(value,str) or not 5<=len(value.strip())<=400:
+                raise RuntimeError("Local AI open-response text failed validation")
+            item[key]=value.strip()
+        clean.append(item)
+    return clean
