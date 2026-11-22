@@ -1021,3 +1021,98 @@ def test_teacher_copilot_is_class_scoped_and_creates_pending_proposal_only(tmp_p
         assert proposal.json()["status"] == "pending"
         assert teacher.get("/api/teacher/assignments").json()["assignments"] == []
         assert student.get("/api/student/assignments").json()["assignments"] == []
+
+
+import pytest
+
+
+def test_student_companion_preferences_history_and_access_are_account_scoped(tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "DB_PATH", tmp_path / "companion.sqlite3")
+    monkeypatch.setattr(main, "public_status", lambda: {
+        "provider": "none", "model": None, "configured": False, "mode": "demo_fallback"
+    })
+    with TestClient(main.app) as teacher, TestClient(main.app) as student, TestClient(main.app) as other:
+        assert teacher.post("/api/auth/register-teacher", json={
+            "email": "companion-teacher@example.test", "password": "StrongPass123!", "display_name": "Teacher"
+        }).status_code == 201
+        classroom = teacher.post("/api/classes", json={"name": "Companion Class"}).json()
+        join_payload = {"join_code": classroom["join_code"], "display_name": "Private Learner",
+                        "email": "companion-student@example.test", "password": "StudentPass123!"}
+        assert student.post("/api/classes/join", json=join_payload).status_code == 201
+        other_payload = {"join_code": classroom["join_code"], "display_name": "Another Learner",
+                         "email": "companion-other@example.test", "password": "StudentPass123!"}
+        assert other.post("/api/classes/join", json=other_payload).status_code == 201
+
+        initial = student.get("/api/student/companion")
+        assert initial.status_code == 200
+        assert initial.json()["profile"] == {"persona": "milo", "learning_style": "step_by_step"}
+        saved = student.put("/api/student/companion/profile", json={
+            "persona": "zizo", "learning_style": "example_first"
+        })
+        assert saved.status_code == 200 and saved.json()["saved"] is True
+
+        sent = student.post("/api/student/companion/messages", json={
+            "lesson_id": "fractions", "text": "عايز أفهم الكسور بمثال من البيتزا"
+        })
+        assert sent.status_code == 200
+        response = sent.json()
+        assert response["persona"] == "zizo"
+        assert response["learning_style"] == "example_first"
+        assert response["mode"] == "demo_fallback"
+        conversation_id = response["conversation_id"]
+        assert len(response["transcript"]) == 2
+
+        continued = student.post("/api/student/companion/messages", json={
+            "conversation_id": conversation_id, "lesson_id": "ratio",
+            "text": "ممكن مثال تاني على نفس الفكرة؟"
+        })
+        assert continued.status_code == 200
+        assert continued.json()["lesson_id"] == "fractions"
+        assert len(continued.json()["transcript"]) == 4
+
+        history = student.get("/api/student/companion").json()["conversations"]
+        assert len(history) == 1 and history[0]["conversation_id"] == conversation_id
+        loaded = student.get(f"/api/student/companion/conversations/{conversation_id}")
+        assert loaded.status_code == 200 and len(loaded.json()["transcript"]) == 4
+        assert other.get(f"/api/student/companion/conversations/{conversation_id}").status_code == 404
+        assert other.get("/api/student/companion").json()["conversations"] == []
+        assert other.get("/api/student/companion").json()["profile"] == {
+            "persona": "milo", "learning_style": "step_by_step"
+        }
+        assert teacher.get("/api/student/companion").status_code == 401
+
+
+def test_companion_redacts_known_student_identity_before_local_model_call(tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "DB_PATH", tmp_path / "companion-privacy.sqlite3")
+    monkeypatch.setattr(main, "public_status", lambda: {
+        "provider": "ollama", "model": "local-test", "configured": True, "mode": "live_ai"
+    })
+    captured = {}
+
+    async def fake_generate(messages, lesson, persona, dialogue_state):
+        captured["messages"] = messages
+        captured["persona"] = persona
+        captured["context"] = dialogue_state
+        return "خلينا نبدأ بمثال بسيط."
+
+    monkeypatch.setattr(main, "generate_reply", fake_generate)
+    with TestClient(main.app) as teacher, TestClient(main.app) as student:
+        assert teacher.post("/api/auth/register-teacher", json={
+            "email": "privacy-teacher@example.test", "password": "StrongPass123!", "display_name": "Teacher"
+        }).status_code == 201
+        classroom = teacher.post("/api/classes", json={"name": "Privacy Class"}).json()
+        assert student.post("/api/classes/join", json={
+            "join_code": classroom["join_code"], "display_name": "Private Learner",
+            "email": "private@example.test", "password": "StudentPass123!"
+        }).status_code == 201
+        response = student.post("/api/student/companion/messages", json={
+            "lesson_id": "fractions",
+            "text": "أنا Private Learner وبريدي private@example.test ورقمي 01012345678 وعايز أفهم الكسور."
+        })
+        assert response.status_code == 200
+        model_text = " ".join(item["text"] for item in captured["messages"])
+        assert "Private Learner" not in model_text
+        assert "private@example.test" not in model_text
+        assert "01012345678" not in model_text
+        assert captured["persona"] == "milo"
+        assert "زميل تعلم" in captured["context"]
