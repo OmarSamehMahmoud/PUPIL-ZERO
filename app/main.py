@@ -21,7 +21,7 @@ from app.assessment import assess_explanation
 from app.intervention_planner import build_intervention_plan
 from app.adaptive import adaptation_summary
 from app.curriculum import get_lesson
-from app.llm import generate_reply, public_status, generate_formative_quiz, generate_learning_feedback, generate_teacher_review_suggestions
+from app.llm import generate_reply, public_status, generate_formative_quiz, generate_learning_feedback, generate_teacher_review_suggestions, generate_open_response_analysis
 from app.learning_journey import build_learning_journey
 from app.pedagogy import advance_state, initial_state, state_context
 from app.teacher_intelligence import build_review_priorities
@@ -29,7 +29,7 @@ from app.learning_engine import build_study_plan, get_quiz_questions, grade_quiz
 
 ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = ROOT / "pupil_zero.db"
-app = FastAPI(title="PUPIL ZERO", version="2.2.0", description="Local-first learning-by-teaching MVP")
+app = FastAPI(title="PUPIL ZERO", version="2.3.0", description="Local-first learning-by-teaching MVP")
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
 
@@ -121,6 +121,11 @@ class SchoolAttendanceRequest(BaseModel):
     student_id: str = Field(min_length=1, max_length=64)
     attendance_date: str = Field(pattern=r"^\d{4}-\d{2}-\d{2}$")
     status: str = Field(pattern=r"^(present|absent|late|excused)$")
+
+class OpenResponseRequest(BaseModel):
+    lesson_id: str = Field(min_length=1, max_length=64)
+    answer: str = Field(min_length=8, max_length=2000)
+
 
 class QuizStartRequest(BaseModel):
     lesson_id: str = Field(min_length=1, max_length=64)
@@ -558,6 +563,51 @@ def student_study_plan(lesson_id: str, student: dict[str, Any] = Depends(current
         except (TypeError, json.JSONDecodeError):
             continue
     return build_study_plan(lesson, reports)
+
+
+@app.post("/api/student/open-response")
+async def analyze_student_open_response(payload: OpenResponseRequest,
+                                        student: dict[str, Any] = Depends(current_student)) -> dict[str, Any]:
+    """Return private, low-stakes concept evidence signals for the signed-in student."""
+    lesson = get_lesson(payload.lesson_id)
+    if not lesson:
+        raise HTTPException(404, "Lesson not found")
+    answer = payload.answer.strip()
+    if len(answer) < 8:
+        raise HTTPException(422, "Please add a little more explanation")
+    concept_map = {item["id"]: item for item in lesson.get("concepts", [])}
+    source, signals = "authored_keyword_signal", []
+    if public_status().get("configured"):
+        try:
+            signals = await generate_open_response_analysis(lesson, answer)
+            source = "local_ai"
+        except Exception:
+            source = "authored_keyword_fallback"
+    if not signals:
+        from app.assessment import normalize
+        normalized = normalize(answer)
+        for concept in lesson.get("concepts", []):
+            evidence = [term for term in concept.get("evidence_terms", [])
+                        if normalize(term) and normalize(term) in normalized]
+            quote = evidence[0] if evidence else ""
+            signals.append({"concept_id":concept["id"],
+                "status":"evidence_found" if quote else "needs_clarification",
+                "evidence_quote":quote,
+                "interpretation":"ظهر تعبير مرتبط بالفكرة في إجابتك." if quote else "الإجابة الحالية لا تعرض دليلًا لفظيًا كافيًا على الفكرة.",
+                "follow_up_question":"ممكن توضح الفكرة بمثال جديد؟"})
+    ordered = sorted(signals, key=lambda item:(item["status"]=="evidence_found",
+                                               concept_map[item["concept_id"]]["label_ar"]))
+    path=[]
+    for index,signal in enumerate(ordered,start=1):
+        concept=concept_map[signal["concept_id"]]
+        path.append({"step":index,"concept_id":signal["concept_id"],"concept":concept["label_ar"],
+            "action":"جرّب سؤالًا تطبيقيًا جديدًا للتأكد من الفكرة." if signal["status"]=="evidence_found" else "ابدأ بمثال محسوس ثم أعد شرح الفكرة بكلماتك.",
+            "authored_hint":concept.get("correction",""),"status":signal["status"]})
+    return {"lesson_id":payload.lesson_id,"signals":signals,"suggested_path":path,"source":source,
+        "notice":"هذه إشارات استكشافية من إجابة واحدة وليست تشخيصًا أو درجة أو قياسًا للإتقان. "
+                 "اقتباس الدليل يوضح ما استند إليه التحليل؛ راجع الشرح بنفسك أو مع المعلم. "
+                 "المسار اقتراح تدريبي قابل للتغيير وليس ترتيب متطلبات أو واجبًا منشورًا.",
+        "privacy":"لم تُرسل هوية الطالب أو بيانات حسابه إلى النموذج؛ أُرسل نص الإجابة وسياق الدرس فقط."}
 
 
 @app.post("/api/student/quizzes", status_code=201)
