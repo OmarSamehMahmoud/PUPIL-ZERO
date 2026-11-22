@@ -1,7 +1,6 @@
 from datetime import date
 import sqlite3
 import json
-import json
 
 from fastapi.testclient import TestClient
 
