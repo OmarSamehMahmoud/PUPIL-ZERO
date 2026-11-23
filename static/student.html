@@ -317,7 +317,7 @@ $('startDebate').onclick=async()=>{
  finally{button.disabled=false}
 };
 $('debateHistory').onchange=async()=>{
- const id=$('debateHistory').value;if(!id){activeDebateId=null;activeDebate=null;$('debateArguments').innerHTML='';$('debateJudge').hidden=true;$('debateReflection').hidden=true;return}
+ const id=$('debateHistory').value;if(!id){activeDebateId=null;activeDebate=null;$('debateArguments').innerHTML='';$('debateLiveThread').innerHTML='';$('debateJudge').hidden=true;$('debateReflection').hidden=true;$('debateInteraction').hidden=true;return}
  try{const data=await get('/api/student/debates/'+encodeURIComponent(id));$('debateLesson').value=data.lesson_id;renderDebate(data);
   $('debateStatus').textContent=data.status==='completed'?'تم تحميل مناظرة سابقة مع اختيارك.':'المناظرة محفوظة وتنتظر اختيارك.'}
  catch(error){$('debateStatus').textContent=error.message}
