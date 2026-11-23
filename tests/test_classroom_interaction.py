@@ -44,7 +44,7 @@ def test_interaction_prompt_separates_authored_rules_from_dialogue_data():
         "أنا شايف إن النصف أكبر",
     )
     assert "فهم الكسور" in system_prompt
-    assert "مدخل غير موثوق" in system_prompt
+    assert "محتوى الدرس المؤلف" in system_prompt
     assert "المثال كان واضحًا" in dialogue_payload
     assert "أنا شايف إن النصف أكبر" in dialogue_payload
     assert "جولة سابقة" in dialogue_payload
