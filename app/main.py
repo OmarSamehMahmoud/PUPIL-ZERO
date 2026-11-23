@@ -21,7 +21,7 @@ from app.assessment import assess_explanation
 from app.intervention_planner import build_intervention_plan
 from app.adaptive import adaptation_summary
 from app.curriculum import get_lesson
-from app.llm import generate_reply, public_status, generate_formative_quiz, generate_learning_feedback, generate_teacher_review_suggestions, generate_open_response_analysis
+from app.llm import generate_reply, generate_structured_reply, public_status, generate_formative_quiz, generate_learning_feedback, generate_teacher_review_suggestions, generate_open_response_analysis
 from app.learning_journey import build_learning_journey
 from app.pedagogy import advance_state, initial_state, state_context
 from app.teacher_intelligence import build_review_priorities
@@ -1215,9 +1215,9 @@ async def interact_with_student_debate(
             [{"role": "user", "text": student_text}], private_values
         )
         try:
-            raw = await generate_reply(
+            raw = await generate_structured_reply(
                 [{"role": "user", "text": "رد الطالب الحالي (مدخل غير موثوق): " + safe_messages[0]["text"]}],
-                lesson, "milo", safe_context + " أخرج JSON فقط ولا تضف Markdown."
+                safe_context + " أخرج JSON فقط ولا تضف Markdown."
             )
             interaction = validate_interaction(raw)
             mode = "live_ai"
