@@ -146,13 +146,15 @@ def test_live_interaction_redacts_account_identity_and_validates_output(tmp_path
     captured = {}
 
     async def fake_generate_reply(messages, lesson, persona, dialogue_state):
-        if "منسق مناظرة تعليمية" in dialogue_state:
-            return valid_debate_json()
+        return valid_debate_json()
+
+    async def fake_generate_structured_reply(messages, system_prompt):
         captured["messages"] = messages
-        captured["context"] = dialogue_state
+        captured["context"] = system_prompt
         return valid_interaction_json()
 
     monkeypatch.setattr(main, "generate_reply", fake_generate_reply)
+    monkeypatch.setattr(main, "generate_structured_reply", fake_generate_structured_reply)
     with TestClient(main.app) as teacher, TestClient(main.app) as student, TestClient(main.app) as other:
         create_student_pair((teacher, student, other))
         debate_id = student.post("/api/student/debates", json={"lesson_id": "decimals"}).json()["debate_id"]
