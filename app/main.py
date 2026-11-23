@@ -31,10 +31,11 @@ from app.teacher_copilot import build_teacher_copilot
 from app.student_companion import companion_guidance, redact_for_model, fallback_companion_reply
 from app.companion_evolution import build_companion_progress, companion_evolution_guidance, count_completed_exchanges, persona_fallback_reply
 from app.classroom_simulation import authored_roundtable, classroom_guidance, format_roundtable, validate_roundtable
+from app.classroom_debate import authored_debate, build_judgment, debate_guidance, validate_debate
 
 ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = ROOT / "pupil_zero.db"
-app = FastAPI(title="PUPIL ZERO", version="3.0.0", description="Local-first learning platform with private AI classroom simulations")
+app = FastAPI(title="PUPIL ZERO", version="3.1.0", description="Local-first learning platform with private AI classroom debates and simulations")
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
 
@@ -178,6 +179,15 @@ class ClassroomMessageRequest(BaseModel):
     text: str = Field(min_length=1, max_length=2000)
     lesson_id: str = Field(default="fractions", min_length=1, max_length=64)
     session_id: str | None = Field(default=None, min_length=36, max_length=36)
+
+
+class DebateStartRequest(BaseModel):
+    lesson_id: str = Field(default="fractions", min_length=1, max_length=64)
+
+
+class DebateJudgeRequest(BaseModel):
+    winner: str = Field(pattern="^(milo|noura|zizo|undecided)$")
+    reason: str = Field(min_length=5, max_length=1200)
 
 
 class InterventionFeedbackRequest(BaseModel):
@@ -377,6 +387,14 @@ def init_db() -> None:
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         )""")
         con.execute("CREATE INDEX IF NOT EXISTS idx_classroom_student_updated ON classroom_simulations(student_id,updated_at)")
+        con.execute("""CREATE TABLE IF NOT EXISTS classroom_debates (
+            id TEXT PRIMARY KEY, student_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            lesson_id TEXT NOT NULL, debate_json TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'awaiting_judgment' CHECK(status IN ('awaiting_judgment','completed')),
+            judgment_json TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )""")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_classroom_debates_student_updated ON classroom_debates(student_id,updated_at)")
 
         con.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_school_teachers_single_school ON school_teachers(teacher_id)")
         con.execute("""CREATE TABLE IF NOT EXISTS school_teacher_invites (
@@ -1077,6 +1095,100 @@ async def send_student_classroom_message(payload: ClassroomMessageRequest,
         "notice": "نقاش تدريبي بين شخصيات افتراضية، وليس نقاشًا بين أشخاص حقيقيين أو تقييمًا للطالب. راجع معلمك عند الشك.",
         "privacy": "أُرسلت للموديل المحلي رسائل النقاش بعد إزالة بيانات الحساب المعروفة وبعض أنماط البريد والهاتف.",
     }
+
+
+# v3.1: a student-judged debate with persistent, account-scoped sessions.
+@app.post("/api/student/debates", status_code=201)
+async def start_student_debate(payload: DebateStartRequest,
+                               student: dict[str, Any] = Depends(current_student)) -> dict[str, Any]:
+    lesson = get_lesson(payload.lesson_id)
+    if not lesson:
+        raise HTTPException(404, "Lesson not found")
+    status = public_status()
+    if status["mode"] == "live_ai":
+        try:
+            raw = await generate_reply(
+                [{"role": "user", "text": "ابدأ مناظرة تعليمية قصيرة عن الدرس، دون افتراض أي معلومات عن الطالب."}],
+                lesson, "milo", debate_guidance(lesson) + " أخرج JSON فقط."
+            )
+            debate = validate_debate(raw)
+            mode = "live_ai"
+        except Exception as exc:
+            raise HTTPException(
+                503, detail=f"Local debate AI is unavailable or returned invalid output ({type(exc).__name__}). Try again."
+            ) from exc
+    else:
+        debate = authored_debate(lesson)
+        mode = "authored_fallback"
+    debate_id = str(uuid.uuid4())
+    with db() as con:
+        con.execute(
+            "INSERT INTO classroom_debates(id,student_id,lesson_id,debate_json) VALUES(?,?,?,?)",
+            (debate_id, student["id"], payload.lesson_id, json.dumps(debate, ensure_ascii=False)),
+        )
+    return {
+        "debate_id": debate_id, "lesson_id": payload.lesson_id,
+        "debate": debate, "status": "awaiting_judgment", "mode": mode,
+        "notice": "مناظرة تدريبية بشخصيات افتراضية. اختيارك وسببك للتفكير والنقاش، وليس درجة أو تقييمًا لقدراتك.",
+    }
+
+
+@app.get("/api/student/debates")
+def list_student_debates(student: dict[str, Any] = Depends(current_student)) -> dict[str, Any]:
+    with db() as con:
+        rows = con.execute(
+            """SELECT id,lesson_id,status,created_at,updated_at FROM classroom_debates
+               WHERE student_id=? ORDER BY updated_at DESC LIMIT 30""",
+            (student["id"],),
+        ).fetchall()
+    return {"debates": [
+        {"debate_id": row["id"], "lesson_id": row["lesson_id"], "status": row["status"],
+         "created_at": row["created_at"], "updated_at": row["updated_at"]}
+        for row in rows
+    ]}
+
+
+@app.get("/api/student/debates/{debate_id}")
+def get_student_debate(debate_id: str,
+                       student: dict[str, Any] = Depends(current_student)) -> dict[str, Any]:
+    with db() as con:
+        row = con.execute(
+            "SELECT * FROM classroom_debates WHERE id=? AND student_id=?",
+            (debate_id, student["id"]),
+        ).fetchone()
+    if not row:
+        raise HTTPException(404, "Debate not found")
+    return {
+        "debate_id": row["id"], "lesson_id": row["lesson_id"],
+        "debate": json.loads(row["debate_json"]),
+        "judgment": json.loads(row["judgment_json"]) if row["judgment_json"] else None,
+        "status": row["status"], "created_at": row["created_at"], "updated_at": row["updated_at"],
+    }
+
+
+@app.post("/api/student/debates/{debate_id}/judge")
+def judge_student_debate(debate_id: str, payload: DebateJudgeRequest,
+                         student: dict[str, Any] = Depends(current_student)) -> dict[str, Any]:
+    try:
+        judgment = build_judgment(payload.winner, payload.reason)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    with db() as con:
+        row = con.execute(
+            "SELECT id,status FROM classroom_debates WHERE id=? AND student_id=?",
+            (debate_id, student["id"]),
+        ).fetchone()
+        if not row:
+            raise HTTPException(404, "Debate not found")
+        if row["status"] != "awaiting_judgment":
+            raise HTTPException(409, "This debate has already been judged")
+        con.execute(
+            """UPDATE classroom_debates SET status='completed',judgment_json=?,
+               updated_at=CURRENT_TIMESTAMP WHERE id=? AND student_id=? AND status='awaiting_judgment'""",
+            (json.dumps(judgment, ensure_ascii=False), debate_id, student["id"]),
+        )
+    return {"debate_id": debate_id, "status": "completed", "judgment": judgment,
+            "notice": "تم حفظ اختيارك وسببك داخل حسابك فقط. لا توجد درجة أو إجابة نموذجية."}
 
 
 @app.post("/api/student/quizzes", status_code=201)
@@ -2218,7 +2330,7 @@ def teacher_session_detail(session_id: str, teacher: dict[str,Any] = Depends(cur
 
 @app.get("/api/health")
 def health() -> dict[str, Any]:
-    return {"status": "ok", "product": "PUPIL ZERO", "version": "2.7.0", **public_status()}
+    return {"status": "ok", "product": "PUPIL ZERO", "version": "3.1.0", **public_status()}
 
 
 @app.get("/api/lessons")
