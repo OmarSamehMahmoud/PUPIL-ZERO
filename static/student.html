@@ -11,7 +11,7 @@
 .companion-compose textarea{flex:1;min-height:76px}
 .companion-evolution{background:#11172d;border:1px solid var(--line);border-radius:12px;padding:14px;margin:12px 0}.companion-evolution progress{width:100%;height:10px;accent-color:var(--cyan)}.companion-badges{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.companion-badge{border:1px solid #4b4778;background:#29264a;border-radius:30px;padding:5px 10px;font-size:12px;color:#ddd7ff}
 .classroom-thread{display:flex;flex-direction:column;gap:12px;max-height:560px;overflow:auto;padding:12px;background:#101329;border:1px solid var(--line);border-radius:12px;margin:12px 0}.classroom-turn{padding:12px;border:1px solid var(--line);border-radius:12px;background:#171d37}.classroom-turn.student{border-inline-start:4px solid #65a9ff}.classroom-turn.ai{border-inline-start:4px solid #9c8cff}.classroom-speaker{font-weight:700;color:#c9c0ff;margin-bottom:5px}.classroom-turn p{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.8;margin:4px 0}.classroom-controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin:12px 0}.classroom-controls label{display:flex;flex-direction:column;gap:6px}
-</style></head>
+ .debate-arguments{display:grid;gap:12px;margin:14px 0}.debate-card{background:#11172d;border:1px solid var(--line);border-radius:12px;padding:14px}.debate-card h3{margin:0 0 8px;color:#c9c0ff}.debate-card p{line-height:1.85;margin:0;white-space:pre-wrap}.debate-choice{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}.debate-choice button[aria-pressed="true"]{outline:2px solid var(--cyan);background:#26345b}.debate-judge{display:grid;gap:10px;margin-top:14px}.debate-judge textarea{min-height:90px;width:100%}.debate-reflection{border-inline-start:4px solid var(--cyan);padding:12px;background:#11172d;border-radius:8px;line-height:1.8}</style></head>
 <body><main class="shell hub"><header class="topbar"><a class="brand" href="/">PUPIL<span>ZERO</span></a><span class="tag">STUDENT HUB</span><a href="/">ابدأ التعلم</a></header>
 <section class="hero-copy"><p class="eyebrow">مساحتك التعليمية</p><h1>أهلاً بيك في يومك الدراسي</h1><p class="sub" id="welcome">جاري تحميل جدولك وواجباتك...</p></section>
 <div class="hub-grid"><section class="hub-card"><h2>جدول الحصص</h2><div id="timetable"></div></section><section class="hub-card"><h2>واجباتي</h2><div id="assignments"></div></section><section class="hub-card"><h2>سجل الحضور</h2><div id="attendance"></div></section><section class="hub-card"><h2>الإشعارات</h2><div id="notifications"></div></section></div>
@@ -70,6 +70,32 @@
   <button id="sendClassroomMessage" type="button">شارك في النقاش</button>
  </div>
  <p class="muted">الشخصيات افتراضية وليست أشخاصًا حقيقيين. الردود الإرشادية بدون موديل محلي ستكون مكتوبة مسبقًا بوضوح.</p>
+</section>
+
+<section class="hub-card" id="classroomDebate">
+ <h2>مناظرة الفصل · AI Classroom Debate</h2>
+ <p class="muted">MILO يعرض حجة، NOURA تختبرها بمثال، وZIZO يقدم اعتراضًا محترمًا. أنت الحكم: اختار الحجة الأكثر إقناعًا واشرح السبب.</p>
+ <div class="classroom-controls">
+  <label>موضوع المناظرة
+   <select id="debateLesson"><option value="fractions">فهم الكسور</option><option value="decimals">الأعداد العشرية</option><option value="ratio">النسبة والتناسب</option></select>
+  </label>
+  <label>مناظرات سابقة
+   <select id="debateHistory"><option value="">مناظرة جديدة</option></select>
+  </label>
+ </div>
+ <button id="startDebate" type="button">ابدأ مناظرة جديدة</button>
+ <p id="debateStatus" class="muted" role="status">اختار الدرس وابدأ المناظرة.</p>
+ <div id="debateArguments" class="debate-arguments" aria-live="polite"></div>
+ <div id="debateJudge" class="debate-judge" hidden>
+  <strong>دورك كحَكَم</strong>
+  <p id="debateQuestion" class="muted"></p>
+  <div id="debateChoices" class="debate-choice"></div>
+  <label for="debateReason">ليه اخترت الحجة دي؟ اشرح بكلماتك</label>
+  <textarea id="debateReason" maxlength="1200" placeholder="أنا اقتنعت بالحجة دي لأن..."></textarea>
+  <button id="submitDebateJudgment" type="button">احفظ اختياري وسببي</button>
+ </div>
+ <div id="debateReflection" class="debate-reflection" hidden aria-live="polite"></div>
+ <p class="muted">الاختيار مش درجة ولا مقياس لقدراتك. الردود قد تكون مكتوبة مسبقًا إذا لم يتم تفعيل موديل محلي.</p>
 </section>
 
 <section class="hub-card" id="learningEngine"><h2>مسار التعلم والاختبار التدريبي</h2><p class="muted">اقتراحات مراجعة مبنية على إشارات الشرح السابقة. الاختبار تدريبي وليس درجة مدرسية.</p><label for="engineLesson">اختار الدرس</label><select id="engineLesson"><option value="fractions">فهم الكسور</option><option value="decimals">الأعداد العشرية</option><option value="ratio">النسبة والتناسب</option></select><button id="loadPlan" type="button">اعرض مسار المراجعة</button><div id="planSteps"></div><button id="startQuiz" type="button">ابدأ اختبارًا قصيرًا</button><form id="quizForm" hidden><div id="quizQuestions"></div><button type="submit">صحّح إجاباتي</button></form><div id="quizResult" aria-live="polite"></div><div id="quizHistory"></div></section>
@@ -231,6 +257,75 @@ $('classroomMessage').addEventListener('keydown',event=>{
  if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();$('sendClassroomMessage').click()}
 });
 refreshClassroomHistory().catch(error=>{$('classroomStatus').textContent=error.message});
+
+
+/* v3.1 student-judged classroom debate */
+let activeDebateId=null,activeDebate=null,selectedDebateWinner=null;
+const debateNames={milo:"MILO · المستكشف",noura:"NOURA · صانعة الأمثلة",zizo:"ZIZO · صاحب الاعتراض",undecided:"لسه مش متأكد"};
+function renderDebate(data){
+ activeDebate=data;activeDebateId=data.debate_id;
+ $('debateArguments').innerHTML='';
+ (data.debate.arguments||[]).forEach(item=>{
+  const card=document.createElement('article');card.className='debate-card';
+  const heading=document.createElement('h3');heading.textContent=debateNames[item.speaker]||item.speaker;
+  const body=document.createElement('p');body.textContent=item.text||'';
+  card.append(heading,body);$('debateArguments').append(card);
+ });
+ $('debateJudge').hidden=data.status!=='awaiting_judgment';
+ $('debateReflection').hidden=true;
+ if(data.status==='awaiting_judgment'){
+  $('debateQuestion').textContent=data.debate.judge_question||'اختار الحجة الأكثر إقناعًا واشرح السبب.';
+  $('debateChoices').innerHTML='';selectedDebateWinner=null;
+  ['milo','noura','zizo','undecided'].forEach(key=>{
+   const button=document.createElement('button');button.type='button';button.className='ghost';
+   button.textContent=debateNames[key];button.setAttribute('aria-pressed','false');
+   button.onclick=()=>{selectedDebateWinner=key;Array.from($('debateChoices').children).forEach(x=>x.setAttribute('aria-pressed',String(x===button)))};
+   $('debateChoices').append(button);
+  });
+  $('debateReason').value='';
+ }else if(data.judgment){
+  const note=document.createElement('p');note.textContent='اختيارك: '+debateNames[data.judgment.winner]+' · السبب: '+data.judgment.reason+' · '+data.judgment.reflection;
+  $('debateReflection').append(note);$('debateReflection').hidden=false;
+ }
+}
+async function refreshDebateHistory(){
+ const data=await get('/api/student/debates'),select=$('debateHistory');select.innerHTML='';
+ const empty=document.createElement('option');empty.value='';empty.textContent='مناظرة جديدة';select.append(empty);
+ data.debates.forEach(item=>{const option=document.createElement('option');option.value=item.debate_id;
+  option.textContent=(item.lesson_id||'درس')+' · '+(item.status==='completed'?'تم التحكيم':'بانتظار اختيارك');select.append(option)});
+}
+$('startDebate').onclick=async()=>{
+ const button=$('startDebate');button.disabled=true;$('debateStatus').textContent='الشخصيات بتحضر حججها...';
+ try{
+  const response=await fetch('/api/student/debates',{method:'POST',headers:{'Content-Type':'application/json'},
+   body:JSON.stringify({lesson_id:$('debateLesson').value})});
+  const data=await response.json();if(!response.ok)throw new Error(data.detail||'تعذر بدء المناظرة');
+  renderDebate(data);$('debateHistory').value=data.debate_id;
+  $('debateStatus').textContent=(data.mode==='live_ai'?'مناظرة من الموديل المحلي':'مناظرة إرشادية مكتوبة مسبقًا')+' · '+data.notice;
+  await refreshDebateHistory();$('debateHistory').value=data.debate_id;
+ }catch(error){$('debateStatus').textContent=error.message}
+ finally{button.disabled=false}
+};
+$('debateHistory').onchange=async()=>{
+ const id=$('debateHistory').value;if(!id){activeDebateId=null;activeDebate=null;$('debateArguments').innerHTML='';$('debateJudge').hidden=true;$('debateReflection').hidden=true;return}
+ try{const data=await get('/api/student/debates/'+encodeURIComponent(id));$('debateLesson').value=data.lesson_id;renderDebate(data);
+  $('debateStatus').textContent=data.status==='completed'?'تم تحميل مناظرة سابقة مع اختيارك.':'المناظرة محفوظة وتنتظر اختيارك.'}
+ catch(error){$('debateStatus').textContent=error.message}
+};
+$('submitDebateJudgment').onclick=async()=>{
+ if(!activeDebateId||!selectedDebateWinner){$('debateStatus').textContent='اختار حجة الأول.';return}
+ const reason=$('debateReason').value.trim();if(reason.length<5){$('debateStatus').textContent='اكتب سببًا بسيطًا لا يقل عن 5 حروف.';return}
+ const button=$('submitDebateJudgment');button.disabled=true;
+ try{
+  const response=await fetch('/api/student/debates/'+encodeURIComponent(activeDebateId)+'/judge',{method:'POST',headers:{'Content-Type':'application/json'},
+   body:JSON.stringify({winner:selectedDebateWinner,reason})});
+  const data=await response.json();if(!response.ok)throw new Error(data.detail||'تعذر حفظ اختيارك');
+  activeDebate.status='completed';activeDebate.judgment=data.judgment;renderDebate(activeDebate);
+  $('debateStatus').textContent=data.notice;await refreshDebateHistory();$('debateHistory').value=activeDebateId;
+ }catch(error){$('debateStatus').textContent=error.message}
+ finally{button.disabled=false}
+};
+refreshDebateHistory().catch(error=>{$('debateStatus').textContent=error.message});
 
 $('analyzeOpenResponse').onclick=async()=>{
  const status=$('openResponseStatus'),root=$('openResponseResult'),answer=$('openResponseAnswer').value.trim();
