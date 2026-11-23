@@ -366,7 +366,7 @@ function renderDebateTurns(turns){
 
 function agencyText(id,value){const root=$(id);root.innerHTML='';const p=document.createElement('p');p.className='agency-result';p.textContent=value;root.append(p)}
 function renderDebateAgencyState(state){
- $('debateRevisionHistory').innerHTML='';
+ $('debateRevisionHistory').innerHTML='';$('debateHintResult').innerHTML='';$('debateObjectionResult').innerHTML='';
  (state.revisions||[]).forEach((x,i)=>{const p=document.createElement('p');p.textContent=(x.kind==='initial'?'الاختيار الأول':'تغيير رأي '+i)+': '+debateNames[x.winner]+' — '+x.reason;$('debateRevisionHistory').append(p)});
  (state.hints||[]).slice(-1).forEach(x=>agencyText('debateHintResult',x.text));
  (state.explanations||[]).slice(-1).forEach(x=>agencyText('debateObjectionResult',debateNames[x.explainer]+' بتشرح اعتراض '+debateNames[x.objector]+': '+x.text));
