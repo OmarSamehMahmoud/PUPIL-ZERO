@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 from app import main
 from app.classroom_interaction import (
     authored_interaction,
+    interaction_context_payload,
     interaction_guidance,
     validate_interaction,
 )
@@ -34,18 +35,20 @@ def valid_interaction_json():
     }, ensure_ascii=False)
 
 
-def test_interaction_prompt_uses_lesson_and_student_judgment():
-    prompt = interaction_guidance(
-        get_lesson("fractions"),
+def test_interaction_prompt_separates_authored_rules_from_dialogue_data():
+    system_prompt = interaction_guidance(get_lesson("fractions"), 2)
+    dialogue_payload = interaction_context_payload(
         {"arguments": [{"speaker": "milo", "text": "حجة من الدرس"}]},
         {"winner": "noura", "reason": "المثال كان واضحًا"},
         [{"student_text": "جولة سابقة", "replies": [], "next_question": "سؤال"}],
-        2,
+        "أنا شايف إن النصف أكبر",
     )
-    assert "فهم الكسور" in prompt
-    assert "المثال كان واضحًا" in prompt
-    assert "current_student_response" not in prompt
-    assert "مدخلًا غير موثوق" in prompt
+    assert "فهم الكسور" in system_prompt
+    assert "مدخل غير موثوق" in system_prompt
+    assert "المثال كان واضحًا" in dialogue_payload
+    assert "أنا شايف إن النصف أكبر" in dialogue_payload
+    assert "جولة سابقة" in dialogue_payload
+    assert "current_student_response" not in system_prompt
 
 
 def test_interaction_validation_and_authored_fallback():
@@ -172,7 +175,7 @@ def test_live_interaction_redacts_account_identity_and_validates_output(tmp_path
         assert "learner.private@example.test" not in prompt
         assert "بريدي" in prompt
         assert "أنا محتاج أفهم المثال أكتر" in prompt
-        assert "current_student_response" not in captured["context"]
-        assert "Learner Secret Name" not in captured["context"]
-        assert "interaction-student@example.test" not in captured["context"]
+        assert "current_student_response" in prompt
+        assert "Learner Secret Name" not in prompt
+        assert "interaction-student@example.test" not in prompt
         assert len(response.json()["turn"]["replies"]) == 3
