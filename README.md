@@ -1,6 +1,6 @@
 # PUPIL ZERO
 
-**Prototype version: 3.0.0**
+**Prototype version: 3.3.0**
 
 **Teach an AI. Discover what you really know.**
 
@@ -225,3 +225,10 @@ The student can start a short lesson-grounded debate: MILO presents a claim, NOU
 After the student judges the opening debate, they can send a response or ask a question. MILO asks for the reasoning, NOURA offers a lesson-linked example, and ZIZO tests the idea with a respectful alternative case. Each round ends with a new question and is saved in the student's private debate record. A debate supports up to eight follow-up rounds.
 
 The local model receives a constrained prompt built from the authored lesson, opening arguments, the student's chosen position and reason, and recent discussion turns. Known account name/email and common email/phone patterns are redacted before the local model call. The model response must pass a strict three-speaker JSON schema. If no local model is configured, the API clearly labels authored follow-up prompts as `authored_fallback`; configured inference errors return 503 rather than pretending a fallback is AI. Student responses are untrusted content and cannot override the debate's safety and lesson-grounding instructions. No student performance score or mastery judgment is produced.
+
+
+## v3.3 AI Classroom Agency & Reflection
+
+The judged debate supports up to five authored lesson-linked hints that guide thinking without directly revealing a final answer; asking one classmate to explain another classmate's objection; and revising the initial judgment up to five times while retaining the original choice and each stated reason. The current judgment and revision history are stored with the student's private debate.
+
+Objection explanations use a constrained structured local-model response when configured. Lesson-only system instructions are separate from debate context, which is sent as untrusted user content after account-name/email redaction. Without a configured model, an explicit authored fallback restates the selected objection and invites reflection. Hints are authored deterministic guidance. All actions are scoped to the authenticated student and are not grades, mastery measures, or diagnoses.

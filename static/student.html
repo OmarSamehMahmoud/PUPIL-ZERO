@@ -11,7 +11,7 @@
 .companion-compose textarea{flex:1;min-height:76px}
 .companion-evolution{background:#11172d;border:1px solid var(--line);border-radius:12px;padding:14px;margin:12px 0}.companion-evolution progress{width:100%;height:10px;accent-color:var(--cyan)}.companion-badges{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}.companion-badge{border:1px solid #4b4778;background:#29264a;border-radius:30px;padding:5px 10px;font-size:12px;color:#ddd7ff}
 .classroom-thread{display:flex;flex-direction:column;gap:12px;max-height:560px;overflow:auto;padding:12px;background:#101329;border:1px solid var(--line);border-radius:12px;margin:12px 0}.classroom-turn{padding:12px;border:1px solid var(--line);border-radius:12px;background:#171d37}.classroom-turn.student{border-inline-start:4px solid #65a9ff}.classroom-turn.ai{border-inline-start:4px solid #9c8cff}.classroom-speaker{font-weight:700;color:#c9c0ff;margin-bottom:5px}.classroom-turn p{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.8;margin:4px 0}.classroom-controls{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px;margin:12px 0}.classroom-controls label{display:flex;flex-direction:column;gap:6px}
- .debate-arguments{display:grid;gap:12px;margin:14px 0}.debate-card{background:#11172d;border:1px solid var(--line);border-radius:12px;padding:14px}.debate-card h3{margin:0 0 8px;color:#c9c0ff}.debate-card p{line-height:1.85;margin:0;white-space:pre-wrap}.debate-choice{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}.debate-choice button[aria-pressed="true"]{outline:2px solid var(--cyan);background:#26345b}.debate-judge{display:grid;gap:10px;margin-top:14px}.debate-judge textarea{min-height:90px;width:100%}.debate-reflection{border-inline-start:4px solid var(--cyan);padding:12px;background:#11172d;border-radius:8px;line-height:1.8} .debate-interaction{margin-top:16px;padding:14px;border:1px solid var(--line);border-radius:12px}.debate-turn{padding:12px;margin:10px 0;background:#11172d;border-radius:10px}.debate-turn p{white-space:pre-wrap;line-height:1.8}.debate-interaction textarea{width:100%;min-height:90px;margin:10px 0}.debate-interaction button:disabled{opacity:.55;cursor:not-allowed}</style></head>
+ .debate-arguments{display:grid;gap:12px;margin:14px 0}.debate-card{background:#11172d;border:1px solid var(--line);border-radius:12px;padding:14px}.debate-card h3{margin:0 0 8px;color:#c9c0ff}.debate-card p{line-height:1.85;margin:0;white-space:pre-wrap}.debate-choice{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}.debate-choice button[aria-pressed="true"]{outline:2px solid var(--cyan);background:#26345b}.debate-judge{display:grid;gap:10px;margin-top:14px}.debate-judge textarea{min-height:90px;width:100%}.debate-reflection{border-inline-start:4px solid var(--cyan);padding:12px;background:#11172d;border-radius:8px;line-height:1.8} .debate-interaction{margin-top:16px;padding:14px;border:1px solid var(--line);border-radius:12px}.debate-turn{padding:12px;margin:10px 0;background:#11172d;border-radius:10px}.debate-turn p{white-space:pre-wrap;line-height:1.8}.debate-interaction textarea{width:100%;min-height:90px;margin:10px 0}.debate-interaction button:disabled{opacity:.55;cursor:not-allowed}.debate-tools-grid{display:grid;gap:14px}.debate-tools-grid>div{border:1px solid var(--line);border-radius:10px;padding:12px}.debate-tools-grid input,.debate-tools-grid textarea,.debate-tools-grid select{width:100%;margin:8px 0;padding:10px;border-radius:8px}.debate-tools-grid textarea{min-height:70px}.agency-result{white-space:pre-wrap;line-height:1.8;margin-top:8px;padding:10px;background:#11172d;border-radius:8px}</style></head>
 <body><main class="shell hub"><header class="topbar"><a class="brand" href="/">PUPIL<span>ZERO</span></a><span class="tag">STUDENT HUB</span><a href="/">ابدأ التعلم</a></header>
 <section class="hero-copy"><p class="eyebrow">مساحتك التعليمية</p><h1>أهلاً بيك في يومك الدراسي</h1><p class="sub" id="welcome">جاري تحميل جدولك وواجباتك...</p></section>
 <div class="hub-grid"><section class="hub-card"><h2>جدول الحصص</h2><div id="timetable"></div></section><section class="hub-card"><h2>واجباتي</h2><div id="assignments"></div></section><section class="hub-card"><h2>سجل الحضور</h2><div id="attendance"></div></section><section class="hub-card"><h2>الإشعارات</h2><div id="notifications"></div></section></div>
@@ -103,6 +103,14 @@
   <textarea id="debateLiveReply" maxlength="1200" placeholder="أنا شايف إن... أو عندي سؤال..."></textarea>
   <button id="sendDebateReply" type="button">ابعت ردي وكمل النقاش</button>
   <p id="debateRoundsRemaining" class="muted"></p>
+ </div>
+ <div id="debateAgencyTools" class="debate-interaction" hidden>
+  <h3>جرّب تفكر من زاوية تانية</h3>
+  <div class="debate-tools-grid">
+   <div><strong>محتاج تلميح؟</strong><p class="muted">هنوجّهك لفكرة من الدرس من غير ما نكشف الحل.</p><input id="debateHintFocus" maxlength="80" placeholder="اختياري: المفهوم اللي محتاج تلميح فيه"><button id="requestDebateHint" type="button" class="ghost">اطلب تلميح</button><div id="debateHintResult" aria-live="polite"></div></div>
+   <div><strong>خلّي شخصية تشرح اعتراض شخصية تانية</strong><div class="classroom-controls"><label>الشخصية اللي هتشرح<select id="debateExplainer"><option value="noura">NOURA</option><option value="milo">MILO</option><option value="zizo">ZIZO</option></select></label><label>صاحب الاعتراض<select id="debateObjector"><option value="zizo">ZIZO</option><option value="milo">MILO</option><option value="noura">NOURA</option></select></label></div><button id="explainDebateObjection" type="button" class="ghost">اشرح الاعتراض</button><div id="debateObjectionResult" aria-live="polite"></div></div>
+   <div><strong>غيّرت رأيك؟ عادي جدًا.</strong><p class="muted">هنحتفظ بالاختيار الأول وسبب كل اختيار.</p><label>اختيارك الجديد<select id="debateRevisedWinner"><option value="undecided">لسه مش متأكد</option><option value="milo">MILO</option><option value="noura">NOURA</option><option value="zizo">ZIZO</option></select></label><textarea id="debateRevisionReason" maxlength="1200" placeholder="غيّرت رأيي لأن..."></textarea><button id="reviseDebatePosition" type="button" class="ghost">احفظ رأيي الجديد</button><div id="debateRevisionHistory" aria-live="polite"></div></div>
+  </div>
  </div>
  <p class="muted">الاختيار مش درجة ولا مقياس لقدراتك. الردود قد تكون مكتوبة مسبقًا إذا لم يتم تفعيل موديل محلي.</p>
 </section>
@@ -280,7 +288,7 @@ function renderDebate(data){
   const body=document.createElement('p');body.textContent=item.text||'';
   card.append(heading,body);$('debateArguments').append(card);
  });
- $('debateJudge').hidden=data.status!=='awaiting_judgment';
+ $('debateJudge').hidden=data.status!=='awaiting_judgment';$('debateAgencyTools').hidden=data.status!=='completed';
  $('debateReflection').hidden=true;$('debateInteraction').hidden=data.status!=='completed';
  renderDebateTurns(data.turns||[]);
  if(data.status==='awaiting_judgment'){
@@ -294,8 +302,8 @@ function renderDebate(data){
   });
   $('debateReason').value='';
  }else if(data.judgment){
-  const note=document.createElement('p');note.textContent='اختيارك: '+debateNames[data.judgment.winner]+' · السبب: '+data.judgment.reason+' · '+data.judgment.reflection;
-  $('debateReflection').append(note);$('debateReflection').hidden=false;
+  const note=document.createElement('p');note.textContent='اختيارك الحالي: '+debateNames[data.judgment.winner]+' · السبب: '+data.judgment.reason+' · '+data.judgment.reflection;
+  $('debateReflection').append(note);$('debateReflection').hidden=false;renderDebateAgencyState(data.challenge_state||{});
  }
 }
 async function refreshDebateHistory(){
@@ -317,9 +325,9 @@ $('startDebate').onclick=async()=>{
  finally{button.disabled=false}
 };
 $('debateHistory').onchange=async()=>{
- const id=$('debateHistory').value;if(!id){activeDebateId=null;activeDebate=null;$('debateArguments').innerHTML='';$('debateLiveThread').innerHTML='';$('debateJudge').hidden=true;$('debateReflection').hidden=true;$('debateInteraction').hidden=true;return}
+ const id=$('debateHistory').value;if(!id){activeDebateId=null;activeDebate=null;$('debateArguments').innerHTML='';$('debateLiveThread').innerHTML='';$('debateJudge').hidden=true;$('debateReflection').hidden=true;$('debateInteraction').hidden=true;$('debateAgencyTools').hidden=true;return}
  try{const data=await get('/api/student/debates/'+encodeURIComponent(id));$('debateLesson').value=data.lesson_id;renderDebate(data);
-  $('debateStatus').textContent=data.status==='completed'?'تم تحميل مناظرة سابقة مع اختيارك.':'المناظرة محفوظة وتنتظر اختيارك.'}
+  $('debateStatus').textContent=data.status==='completed'?'تم تحميل مناظرة سابقة مع اختيارك.':'المناظرة محفوظة وتنتظر اختيارك.';renderDebateAgencyState(data.challenge_state||{})}
  catch(error){$('debateStatus').textContent=error.message}
 };
 $('submitDebateJudgment').onclick=async()=>{
@@ -355,6 +363,17 @@ function renderDebateTurns(turns){
  $('sendDebateReply').disabled=count>=8;
  if(count>=8)$('debateRoundsRemaining').textContent+=' · وصلت للحد الأقصى لهذه المناظرة.';
 }
+
+function agencyText(id,value){const root=$(id);root.innerHTML='';const p=document.createElement('p');p.className='agency-result';p.textContent=value;root.append(p)}
+function renderDebateAgencyState(state){
+ $('debateRevisionHistory').innerHTML='';$('debateHintResult').innerHTML='';$('debateObjectionResult').innerHTML='';
+ (state.revisions||[]).forEach((x,i)=>{const p=document.createElement('p');p.textContent=(x.kind==='initial'?'الاختيار الأول':'تغيير رأي '+i)+': '+debateNames[x.winner]+' — '+x.reason;$('debateRevisionHistory').append(p)});
+ (state.hints||[]).slice(-1).forEach(x=>agencyText('debateHintResult',x.text));
+ (state.explanations||[]).slice(-1).forEach(x=>agencyText('debateObjectionResult',debateNames[x.explainer]+' بتشرح اعتراض '+debateNames[x.objector]+': '+x.text));
+}
+$('requestDebateHint').onclick=async()=>{if(!activeDebateId)return;const b=$('requestDebateHint');b.disabled=true;try{const r=await fetch('/api/student/debates/'+encodeURIComponent(activeDebateId)+'/hint',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({focus:$('debateHintFocus').value.trim()})});const d=await r.json();if(!r.ok)throw new Error(d.detail||'تعذر إنشاء التلميح');activeDebate.challenge_state=d.challenge_state;agencyText('debateHintResult',d.hint.text);renderDebateAgencyState(d.challenge_state);$('debateStatus').textContent=d.notice}catch(e){$('debateStatus').textContent=e.message}finally{b.disabled=false}};
+$('explainDebateObjection').onclick=async()=>{if(!activeDebateId)return;const b=$('explainDebateObjection');b.disabled=true;try{const r=await fetch('/api/student/debates/'+encodeURIComponent(activeDebateId)+'/explain-objection',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({explainer:$('debateExplainer').value,objector:$('debateObjector').value})});const d=await r.json();if(!r.ok)throw new Error(d.detail||'تعذر شرح الاعتراض');activeDebate.challenge_state=d.challenge_state;agencyText('debateObjectionResult',debateNames[d.explanation.explainer]+' بتشرح اعتراض '+debateNames[d.explanation.objector]+': '+d.explanation.text);renderDebateAgencyState(d.challenge_state);$('debateStatus').textContent=(d.explanation.mode==='live_ai'?'شرح من الموديل المحلي':'شرح إرشادي مكتوب مسبقًا')+' · '+d.notice}catch(e){$('debateStatus').textContent=e.message}finally{b.disabled=false}};
+$('reviseDebatePosition').onclick=async()=>{if(!activeDebateId)return;const reason=$('debateRevisionReason').value.trim();if(reason.length<5){$('debateStatus').textContent='اكتب سبب التغيير في 5 حروف على الأقل.';return}const b=$('reviseDebatePosition');b.disabled=true;try{const r=await fetch('/api/student/debates/'+encodeURIComponent(activeDebateId)+'/revise',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({winner:$('debateRevisedWinner').value,reason})});const d=await r.json();if(!r.ok)throw new Error(d.detail||'تعذر حفظ الرأي الجديد');activeDebate.judgment=d.judgment;activeDebate.challenge_state=d.challenge_state;$('debateRevisionReason').value='';renderDebate(activeDebate);$('debateStatus').textContent=d.notice;await refreshDebateHistory();$('debateHistory').value=activeDebateId}catch(e){$('debateStatus').textContent=e.message}finally{b.disabled=false}};
 $('sendDebateReply').onclick=async()=>{
  if(!activeDebateId)return;
  const message=$('debateLiveReply').value.trim();
