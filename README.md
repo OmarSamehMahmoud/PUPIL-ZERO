@@ -141,6 +141,8 @@ Tests are committed and a GitHub Actions workflow runs them on pushes and pull r
 - `POST /api/student/debates` — create a lesson-grounded debate between MILO, NOURA, and ZIZO. JSON: `{"lesson_id":"fractions"}`.
 - `GET /api/student/debates` / `GET /api/student/debates/{debate_id}` — list and resume the signed-in student's private debates.
 - `POST /api/student/debates/{debate_id}/judge` — save the student's selected argument (`milo`, `noura`, `zizo`, or `undecided`) and a short explanation. This is reflection, not a grade.
+- `POST /api/student/debates/{debate_id}/interact` — continue a judged debate with a student response (JSON: `{"text":"أنا شايف إن..." }`). Returns three distinct follow-up replies and a next question; up to eight persisted rounds per debate.
+- `GET /api/student/debates/{debate_id}` — also returns the saved follow-up turns.
 - `GET /api/student/progress` — the signed-in student's own learning progress; optional enrolled `class_id` filter.
 - `GET /api/teacher/classes/{class_id}/progress` — roster-level progress summary for a class owned by the signed-in teacher.
 - `GET /api/teacher/students/{student_id}/progress?class_id=...` — individual progress, only for a student enrolled in the specified class owned by the teacher.
@@ -216,3 +218,10 @@ This opt-in test sends a real request to the local model and validates lesson-sc
 ## v3.1 AI Classroom Debate & Roleplay
 
 The student can start a short lesson-grounded debate: MILO presents a claim, NOURA tests it with an example, and ZIZO raises a respectful counterpoint or boundary case. The student then acts as judge, chooses the most persuasive argument (or "not sure"), and records a reason. Debates and judgments are private to the authenticated student account and can be resumed later. The local model must return a validated structured response; when no model is configured, the API labels its authored lesson-based alternative as `authored_fallback`. A configured but unavailable or invalid model returns an error rather than silently switching modes. Student choices are not graded, ranked, or interpreted as evidence of ability or mastery.
+
+
+## v3.2 AI Classroom Live Interaction
+
+After the student judges the opening debate, they can send a response or ask a question. MILO asks for the reasoning, NOURA offers a lesson-linked example, and ZIZO tests the idea with a respectful alternative case. Each round ends with a new question and is saved in the student's private debate record. A debate supports up to eight follow-up rounds.
+
+The local model receives a constrained prompt built from the authored lesson, opening arguments, the student's chosen position and reason, and recent discussion turns. Known account name/email and common email/phone patterns are redacted before the local model call. The model response must pass a strict three-speaker JSON schema. If no local model is configured, the API clearly labels authored follow-up prompts as `authored_fallback`; configured inference errors return 503 rather than pretending a fallback is AI. Student responses are untrusted content and cannot override the debate's safety and lesson-grounding instructions. No student performance score or mastery judgment is produced.

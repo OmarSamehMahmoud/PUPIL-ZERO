@@ -125,6 +125,52 @@ async def generate_reply(
     return answer[:3000]
 
 
+async def generate_structured_reply(messages: list[dict[str, str]], system_prompt: str) -> str:
+    """Generate strict JSON-oriented output without the single-persona chat template."""
+    cfg = provider_settings()
+    provider = cfg["provider"]
+    if provider not in {"ollama", "openai-compatible"}:
+        raise RuntimeError("A configured Ollama or OpenAI-compatible provider is required")
+    if not cfg["model"]:
+        raise RuntimeError("Set PUPIL_LLM_MODEL before starting a structured AI interaction")
+
+    chat_messages = [{"role": "system", "content": system_prompt}]
+    chat_messages.extend(
+        {"role": item.get("role", "user"), "content": item.get("text", "")}
+        for item in messages[-8:]
+    )
+    timeout = httpx.Timeout(60.0, connect=5.0)
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        if provider == "ollama":
+            response = await client.post(
+                f"{cfg['base_url']}/api/chat",
+                json={
+                    "model": cfg["model"], "messages": chat_messages,
+                    "stream": False, "format": "json",
+                    "options": {"temperature": 0.35},
+                },
+            )
+            response.raise_for_status()
+            answer = response.json().get("message", {}).get("content", "")
+        else:
+            headers = {"Authorization": f"Bearer {cfg['api_key']}"} if cfg["api_key"] else {}
+            response = await client.post(
+                f"{cfg['base_url']}/v1/chat/completions",
+                headers=headers,
+                json={
+                    "model": cfg["model"], "messages": chat_messages,
+                    "temperature": 0.35, "response_format": {"type": "json_object"},
+                },
+            )
+            response.raise_for_status()
+            choices = response.json().get("choices", [])
+            answer = choices[0].get("message", {}).get("content", "") if choices else ""
+    answer = str(answer).strip()
+    if not answer:
+        raise RuntimeError("The configured model returned an empty structured response")
+    return answer[:5000]
+
+
 async def generate_formative_quiz(lesson: dict[str, Any], count: int = 3) -> list[dict[str, Any]]:
     """Generate validated candidate MCQs using the configured local/self-hosted model."""
     import json
