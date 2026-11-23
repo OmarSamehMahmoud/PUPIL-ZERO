@@ -12,6 +12,17 @@ from app.classroom_interaction import (
 from app.curriculum import get_lesson
 
 
+def valid_debate_json():
+    return json.dumps({
+        "arguments": [
+            {"speaker": "milo", "text": "خلينا نبدأ بالحجة الأساسية من الدرس."},
+            {"speaker": "noura", "text": "المثال ده يساعدنا نختبر الفكرة بشكل واضح."},
+            {"speaker": "zizo", "text": "طب هل الحجة تفضل صحيحة لو غيرنا حالة المثال؟"},
+        ],
+        "judge_question": "مين حجته أقنعتك أكتر؟ وضح السبب بكلماتك.",
+    }, ensure_ascii=False)
+
+
 def valid_interaction_json():
     return json.dumps({
         "replies": [
@@ -136,6 +147,8 @@ def test_live_interaction_redacts_account_identity_and_validates_output(tmp_path
     captured = {}
 
     async def fake_generate_reply(messages, lesson, persona, dialogue_state):
+        if "منسق مناظرة تعليمية" in dialogue_state:
+            return valid_debate_json()
         captured["messages"] = messages
         captured["context"] = dialogue_state
         return valid_interaction_json()
