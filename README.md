@@ -138,6 +138,9 @@ Tests are committed and a GitHub Actions workflow runs them on pushes and pull r
 - `GET /api/student/classroom` — list the signed-in student's private AI classroom discussions.
 - `GET /api/student/classroom/{session_id}` — resume one classroom discussion owned by the signed-in student.
 - `POST /api/student/classroom/messages` — add a student message and receive a structured roundtable from MILO, NOURA, and ZIZO. JSON: `{"lesson_id":"fractions","text":"عايز أفهم الكسور" }`; send `session_id` to continue an existing discussion.
+- `POST /api/student/debates` — create a lesson-grounded debate between MILO, NOURA, and ZIZO. JSON: `{"lesson_id":"fractions"}`.
+- `GET /api/student/debates` / `GET /api/student/debates/{debate_id}` — list and resume the signed-in student's private debates.
+- `POST /api/student/debates/{debate_id}/judge` — save the student's selected argument (`milo`, `noura`, `zizo`, or `undecided`) and a short explanation. This is reflection, not a grade.
 - `GET /api/student/progress` — the signed-in student's own learning progress; optional enrolled `class_id` filter.
 - `GET /api/teacher/classes/{class_id}/progress` — roster-level progress summary for a class owned by the signed-in teacher.
 - `GET /api/teacher/students/{student_id}/progress?class_id=...` — individual progress, only for a student enrolled in the specified class owned by the teacher.
@@ -208,3 +211,8 @@ PUPIL_LIVE_OLLAMA_TEST=1 python -m pytest tests/test_ollama_integration.py -q
 ```
 
 This opt-in test sends a real request to the local model and validates lesson-scoped concept IDs and verbatim evidence quotes. It is skipped in standard CI so automated tests remain offline and deterministic.
+
+
+## v3.1 AI Classroom Debate & Roleplay
+
+The student can start a short lesson-grounded debate: MILO presents a claim, NOURA tests it with an example, and ZIZO raises a respectful counterpoint or boundary case. The student then acts as judge, chooses the most persuasive argument (or "not sure"), and records a reason. Debates and judgments are private to the authenticated student account and can be resumed later. The local model must return a validated structured response; when no model is configured, the API labels its authored lesson-based alternative as `authored_fallback`. A configured but unavailable or invalid model returns an error rather than silently switching modes. Student choices are not graded, ranked, or interpreted as evidence of ability or mastery.
