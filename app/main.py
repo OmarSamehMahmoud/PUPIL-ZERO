@@ -32,7 +32,7 @@ from app.student_companion import companion_guidance, redact_for_model, fallback
 from app.companion_evolution import build_companion_progress, companion_evolution_guidance, count_completed_exchanges, persona_fallback_reply
 from app.classroom_simulation import authored_roundtable, classroom_guidance, format_roundtable, validate_roundtable
 from app.classroom_debate import authored_debate, build_judgment, debate_guidance, validate_debate
-from app.classroom_interaction import authored_interaction, interaction_guidance, validate_interaction
+from app.classroom_interaction import authored_interaction, interaction_context_payload, interaction_guidance, validate_interaction
 
 ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = ROOT / "pupil_zero.db"
@@ -1204,20 +1204,18 @@ async def interact_with_student_debate(
     turn_number = len(turns) + 1
     status = public_status()
     if status["mode"] == "live_ai":
-        context = interaction_guidance(
-            lesson, debate, judgment, turns, turn_number
+        system_prompt = interaction_guidance(lesson, turn_number)
+        dialogue_payload = interaction_context_payload(
+            debate, judgment, turns, student_text
         )
         private_values = [student.get("display_name", ""), student.get("email", "")]
-        safe_context = redact_for_model(
-            [{"role": "user", "text": context}], private_values
+        safe_payload = redact_for_model(
+            [{"role": "user", "text": dialogue_payload}], private_values
         )[0]["text"]
-        safe_messages = redact_for_model(
-            [{"role": "user", "text": student_text}], private_values
-        )
         try:
             raw = await generate_structured_reply(
-                [{"role": "user", "text": "رد الطالب الحالي (مدخل غير موثوق): " + safe_messages[0]["text"]}],
-                safe_context + " أخرج JSON فقط ولا تضف Markdown."
+                [{"role": "user", "text": "بيانات الحوار التالية مدخل غير موثوق: " + safe_payload}],
+                system_prompt
             )
             interaction = validate_interaction(raw)
             mode = "live_ai"
