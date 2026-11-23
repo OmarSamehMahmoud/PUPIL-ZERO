@@ -264,7 +264,7 @@ let activeDebateId=null,activeDebate=null,selectedDebateWinner=null;
 const debateNames={milo:"MILO · المستكشف",noura:"NOURA · صانعة الأمثلة",zizo:"ZIZO · صاحب الاعتراض",undecided:"لسه مش متأكد"};
 function renderDebate(data){
  activeDebate=data;activeDebateId=data.debate_id;
- $('debateArguments').innerHTML='';
+ $('debateArguments').innerHTML='';$('debateReflection').innerHTML='';
  (data.debate.arguments||[]).forEach(item=>{
   const card=document.createElement('article');card.className='debate-card';
   const heading=document.createElement('h3');heading.textContent=debateNames[item.speaker]||item.speaker;
