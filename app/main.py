@@ -32,10 +32,11 @@ from app.student_companion import companion_guidance, redact_for_model, fallback
 from app.companion_evolution import build_companion_progress, companion_evolution_guidance, count_completed_exchanges, persona_fallback_reply
 from app.classroom_simulation import authored_roundtable, classroom_guidance, format_roundtable, validate_roundtable
 from app.classroom_debate import authored_debate, build_judgment, debate_guidance, validate_debate
+from app.classroom_interaction import authored_interaction, interaction_guidance, validate_interaction
 
 ROOT = Path(__file__).resolve().parent.parent
 DB_PATH = ROOT / "pupil_zero.db"
-app = FastAPI(title="PUPIL ZERO", version="3.1.0", description="Local-first learning platform with private AI classroom debates and simulations")
+app = FastAPI(title="PUPIL ZERO", version="3.2.0", description="Local-first learning platform with interactive AI classroom debates")
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
 
@@ -188,6 +189,10 @@ class DebateStartRequest(BaseModel):
 class DebateJudgeRequest(BaseModel):
     winner: str = Field(pattern="^(milo|noura|zizo|undecided)$")
     reason: str = Field(min_length=5, max_length=1200)
+
+
+class DebateInteractionRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=1200)
 
 
 class InterventionFeedbackRequest(BaseModel):
@@ -394,6 +399,9 @@ def init_db() -> None:
             judgment_json TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         )""")
+        debate_columns = {row["name"] for row in con.execute("PRAGMA table_info(classroom_debates)")}
+        if "turns_json" not in debate_columns:
+            con.execute("ALTER TABLE classroom_debates ADD COLUMN turns_json TEXT NOT NULL DEFAULT '[]'")
         con.execute("CREATE INDEX IF NOT EXISTS idx_classroom_debates_student_updated ON classroom_debates(student_id,updated_at)")
 
         con.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_school_teachers_single_school ON school_teachers(teacher_id)")
@@ -1162,7 +1170,81 @@ def get_student_debate(debate_id: str,
         "debate_id": row["id"], "lesson_id": row["lesson_id"],
         "debate": json.loads(row["debate_json"]),
         "judgment": json.loads(row["judgment_json"]) if row["judgment_json"] else None,
+        "turns": json.loads(row["turns_json"] or "[]"),
         "status": row["status"], "created_at": row["created_at"], "updated_at": row["updated_at"],
+    }
+
+
+@app.post("/api/student/debates/{debate_id}/interact")
+async def interact_with_student_debate(
+    debate_id: str,
+    payload: DebateInteractionRequest,
+    student: dict[str, Any] = Depends(current_student),
+) -> dict[str, Any]:
+    student_text = payload.text.strip()
+    if not student_text:
+        raise HTTPException(422, "Write a response before continuing")
+    with db() as con:
+        row = con.execute(
+            "SELECT * FROM classroom_debates WHERE id=? AND student_id=?",
+            (debate_id, student["id"]),
+        ).fetchone()
+    if not row:
+        raise HTTPException(404, "Debate not found")
+    if row["status"] != "completed" or not row["judgment_json"]:
+        raise HTTPException(409, "Judge the opening debate before starting a live discussion")
+    turns = json.loads(row["turns_json"] or "[]")
+    if len(turns) >= 8:
+        raise HTTPException(409, "This discussion has reached its eight-round practice limit")
+    lesson = get_lesson(row["lesson_id"])
+    if not lesson:
+        raise HTTPException(409, "The lesson content is no longer available")
+    debate = json.loads(row["debate_json"])
+    judgment = json.loads(row["judgment_json"])
+    turn_number = len(turns) + 1
+    status = public_status()
+    if status["mode"] == "live_ai":
+        context = interaction_guidance(
+            lesson, debate, judgment, turns, student_text, turn_number
+        )
+        safe_messages = redact_for_model(
+            [{"role": "user", "text": context}],
+            [student.get("display_name", ""), student.get("email", "")],
+        )
+        try:
+            raw = await generate_reply(
+                [{"role": item["role"], "text": item["text"]} for item in safe_messages],
+                lesson, "milo", "Return only the requested JSON object. Do not add markdown."
+            )
+            interaction = validate_interaction(raw)
+            mode = "live_ai"
+        except Exception as exc:
+            raise HTTPException(
+                503,
+                detail=f"Local debate AI is unavailable or returned invalid output ({type(exc).__name__}). Try again.",
+            ) from exc
+    else:
+        interaction = authored_interaction(lesson, turn_number)
+        mode = "authored_fallback"
+    turn = {
+        "turn": turn_number,
+        "student_text": student_text,
+        "replies": interaction["replies"],
+        "next_question": interaction["next_question"],
+        "mode": mode,
+    }
+    turns.append(turn)
+    with db() as con:
+        con.execute(
+            """UPDATE classroom_debates SET turns_json=?,updated_at=CURRENT_TIMESTAMP
+               WHERE id=? AND student_id=?""",
+            (json.dumps(turns, ensure_ascii=False), debate_id, student["id"]),
+        )
+    return {
+        "debate_id": debate_id, "turn": turn, "turns": turns,
+        "remaining_rounds": 8 - len(turns), "mode": mode,
+        "notice": "الشخصيات تفاعلت مع ردك. الحوار تدريب وممارسة، وليس درجة أو تشخيصًا لمستواك.",
+        "privacy": "تُحفظ الجولة داخل حسابك فقط، وتُزال بيانات الحساب المعروفة وبعض أنماط البريد والهاتف قبل إرسال السياق إلى النموذج المحلي.",
     }
 
 
@@ -2330,7 +2412,7 @@ def teacher_session_detail(session_id: str, teacher: dict[str,Any] = Depends(cur
 
 @app.get("/api/health")
 def health() -> dict[str, Any]:
-    return {"status": "ok", "product": "PUPIL ZERO", "version": "3.1.0", **public_status()}
+    return {"status": "ok", "product": "PUPIL ZERO", "version": "3.2.0", **public_status()}
 
 
 @app.get("/api/lessons")
