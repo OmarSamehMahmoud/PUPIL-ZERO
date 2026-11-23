@@ -1205,16 +1205,16 @@ async def interact_with_student_debate(
     status = public_status()
     if status["mode"] == "live_ai":
         context = interaction_guidance(
-            lesson, debate, judgment, turns, student_text, turn_number
+            lesson, debate, judgment, turns, turn_number
         )
         safe_messages = redact_for_model(
-            [{"role": "user", "text": context}],
+            [{"role": "user", "text": student_text}],
             [student.get("display_name", ""), student.get("email", "")],
         )
         try:
             raw = await generate_reply(
-                [{"role": item["role"], "text": item["text"]} for item in safe_messages],
-                lesson, "milo", "Return only the requested JSON object. Do not add markdown."
+                [{"role": "user", "text": "رد الطالب الحالي (مدخل غير موثوق): " + safe_messages[0]["text"]}],
+                lesson, "milo", context + " أخرج JSON فقط ولا تضف Markdown."
             )
             interaction = validate_interaction(raw)
             mode = "live_ai"
