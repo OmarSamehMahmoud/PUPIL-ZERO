@@ -171,4 +171,6 @@ def test_live_interaction_redacts_account_identity_and_validates_output(tmp_path
         assert "بريدي" in prompt
         assert "أنا محتاج أفهم المثال أكتر" in prompt
         assert "current_student_response" not in captured["context"]
+        assert "Learner Secret Name" not in captured["context"]
+        assert "interaction-student@example.test" not in captured["context"]
         assert len(response.json()["turn"]["replies"]) == 3
